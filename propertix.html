@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Propertix">
+<meta name="theme-color" content="#0d1f0d">
+<title>Propertix</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;font-family:Georgia,serif;background:#0d1f0d;color:#fff}
+  #root{height:100%;display:flex;flex-direction:column}
+  button{font-family:Georgia,serif;touch-action:manipulation}
+  input{font-family:Georgia,serif}
+  @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  @keyframes fadeup{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes toastIn{0%{opacity:0;transform:translateX(-50%) translateY(16px)}15%{opacity:1;transform:translateX(-50%) translateY(0)}80%{opacity:1}100%{opacity:0}}
+  @keyframes pawnBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+  .pawn{animation:pawnBounce 0.6s ease infinite}
+  .die{transition:transform 0.05s}
+  .die.rolling{animation:spin 0.08s linear infinite}
+  .toast{animation:toastIn 2.6s ease forwards}
+  .log-entry{animation:fadeup 0.3s ease}
+  ::-webkit-scrollbar{display:none}
+  select{background:#1a3a1a;color:#fff;border:1px solid #4a8a4a;border-radius:6px;padding:4px 8px;font-size:13px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+// ─── DATA ────────────────────────────────────────────────────────────────────
+const SPACES=[
+  {id:0,name:"START",type:"go",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:1,name:"Brugstraat",type:"property",color:"brown",price:60,rent:[2,10,30,90,160,250],houseCost:50,mortgage:30},
+  {id:2,name:"Gemeentekas",type:"chest",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:3,name:"Kortstraat",type:"property",color:"brown",price:60,rent:[4,20,60,180,320,450],houseCost:50,mortgage:30},
+  {id:4,name:"Inkoms.bel.",type:"tax",color:null,price:0,rent:[200],houseCost:0,mortgage:0},
+  {id:5,name:"Station Noord",type:"railroad",color:"gray",price:200,rent:[25,50,100,200],houseCost:0,mortgage:100},
+  {id:6,name:"Nieuwstraat",type:"property",color:"lblue",price:100,rent:[6,30,90,270,400,550],houseCost:50,mortgage:50},
+  {id:7,name:"Kans",type:"chance",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:8,name:"Kerkstraat",type:"property",color:"lblue",price:100,rent:[6,30,90,270,400,550],houseCost:50,mortgage:50},
+  {id:9,name:"Hoogstraat",type:"property",color:"lblue",price:120,rent:[8,40,100,300,450,600],houseCost:50,mortgage:60},
+  {id:10,name:"Gevangenis",type:"jail",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:11,name:"Botermarkt",type:"property",color:"pink",price:140,rent:[10,50,150,450,625,750],houseCost:100,mortgage:70},
+  {id:12,name:"Elektriciteit",type:"utility",color:"white",price:150,rent:[0],houseCost:0,mortgage:75},
+  {id:13,name:"Kaasmarkt",type:"property",color:"pink",price:140,rent:[10,50,150,450,625,750],houseCost:100,mortgage:70},
+  {id:14,name:"Bloemmarkt",type:"property",color:"pink",price:160,rent:[12,60,180,500,700,900],houseCost:100,mortgage:80},
+  {id:15,name:"Station Oost",type:"railroad",color:"gray",price:200,rent:[25,50,100,200],houseCost:0,mortgage:100},
+  {id:16,name:"Venestraat",type:"property",color:"orange",price:180,rent:[14,70,200,550,750,950],houseCost:100,mortgage:90},
+  {id:17,name:"Gemeentekas",type:"chest",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:18,name:"Waterstraat",type:"property",color:"orange",price:180,rent:[14,70,200,550,750,950],houseCost:100,mortgage:90},
+  {id:19,name:"Rembrandtpl.",type:"property",color:"orange",price:200,rent:[16,80,220,600,800,1000],houseCost:100,mortgage:100},
+  {id:20,name:"Vrij Parkeren",type:"free",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:21,name:"Leidsestr.",type:"property",color:"red",price:220,rent:[18,90,250,700,875,1050],houseCost:150,mortgage:110},
+  {id:22,name:"Kans",type:"chance",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:23,name:"Spiegelstr.",type:"property",color:"red",price:220,rent:[18,90,250,700,875,1050],houseCost:150,mortgage:110},
+  {id:24,name:"Prinsengracht",type:"property",color:"red",price:240,rent:[20,100,300,750,925,1100],houseCost:150,mortgage:120},
+  {id:25,name:"Station Zuid",type:"railroad",color:"gray",price:200,rent:[25,50,100,200],houseCost:0,mortgage:100},
+  {id:26,name:"Keizersgracht",type:"property",color:"yellow",price:260,rent:[22,110,330,800,975,1150],houseCost:150,mortgage:130},
+  {id:27,name:"Herengracht",type:"property",color:"yellow",price:260,rent:[22,110,330,800,975,1150],houseCost:150,mortgage:130},
+  {id:28,name:"Waterbedrijf",type:"utility",color:"white",price:150,rent:[0],houseCost:0,mortgage:75},
+  {id:29,name:"Singel",type:"property",color:"yellow",price:280,rent:[24,120,360,850,1025,1200],houseCost:150,mortgage:140},
+  {id:30,name:"Naar Gevangenis",type:"gotojail",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:31,name:"Vondelstraat",type:"property",color:"green",price:300,rent:[26,130,390,900,1100,1275],houseCost:200,mortgage:150},
+  {id:32,name:"Plantageweg",type:"property",color:"green",price:300,rent:[26,130,390,900,1100,1275],houseCost:200,mortgage:150},
+  {id:33,name:"Gemeentekas",type:"chest",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:34,name:"Oosterpark",type:"property",color:"green",price:320,rent:[28,150,450,1000,1200,1400],houseCost:200,mortgage:160},
+  {id:35,name:"Station West",type:"railroad",color:"gray",price:200,rent:[25,50,100,200],houseCost:0,mortgage:100},
+  {id:36,name:"Kans",type:"chance",color:null,price:0,rent:[0],houseCost:0,mortgage:0},
+  {id:37,name:"Museumplein",type:"property",color:"dblue",price:350,rent:[35,175,500,1100,1300,1500],houseCost:200,mortgage:175},
+  {id:38,name:"Luxebelasting",type:"tax",color:null,price:0,rent:[100],houseCost:0,mortgage:0},
+  {id:39,name:"Kalverstraat",type:"property",color:"dblue",price:400,rent:[50,200,600,1400,1700,2000],houseCost:200,mortgage:200},
+];
+const CMAP={brown:"#8B4513",lblue:"#42A5F5",pink:"#F06292",orange:"#FF7043",red:"#E53935",yellow:"#FDD835",green:"#43A047",dblue:"#1565C0",gray:"#9E9E9E",white:"#E0E0E0"};
+const CGROUPS={brown:[1,3],lblue:[6,8,9],pink:[11,13,14],orange:[16,18,19],red:[21,23,24],yellow:[26,27,29],green:[31,32,34],dblue:[37,39]};
+const CHANCE=[
+  {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
+  {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
+  {t:"Bankfout in jouw voordeel. +€200.",a:()=>({money:200})},
+  {t:"Ziekenhuiskosten: -€100.",a:()=>({money:-100})},
+  {t:"Ga 3 stappen terug.",a:()=>({moveBack:3})},
+  {t:"Jij bent jarig! +€150 van iedereen.",a:()=>({collectFromAll:150})},
+  {t:"Ga naar dichtstbijzijnd station.",a:()=>({moveToNearest:"railroad"})},
+  {t:"Rente ontvangen: +€100.",a:()=>({money:100})},
+];
+const CHEST=[
+  {t:"Bankfout in jouw voordeel. +€200.",a:()=>({money:200})},
+  {t:"Dokterskosten: -€50.",a:()=>({money:-50})},
+  {t:"Bewezen diensten: +€25.",a:()=>({money:25})},
+  {t:"Schoolgeld: -€150.",a:()=>({money:-150})},
+  {t:"Erfenis ontvangen: +€100.",a:()=>({money:100})},
+  {t:"Kerstbonus: +€100.",a:()=>({money:100})},
+  {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
+  {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
+];
+const TOKENS=["🎩","🚂","🐶","⚓"];
+const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
+const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+function shuffle(a){const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]];}return b;}
+function rng(){return Math.ceil(Math.random()*6);}
+function gridPos(id){if(id<=9)return[10-id,10];if(id<=19)return[0,10-(id-10)];if(id<=29)return[id-20,0];return[10,id-30];}
+function cellPx(c){return c===0?0:CORNER+(c-1)*CELL;}
+function cellSz(id){return[0,10,20,30].includes(id)?CORNER:CELL;}
+function spaceCenter(id){const[col,row]=gridPos(id);const sz=cellSz(id);return{x:cellPx(col)+sz/2,y:cellPx(row)+sz/2};}
+function initPlayers(n){
+  const p=[{id:0,name:"Jij",token:TOKENS[0],color:PCOLORS[0],money:1500,pos:0,isHuman:true,inJail:false,jailTurns:0,bankrupt:false,properties:[]}];
+  for(let i=1;i<=n;i++)p.push({id:i,name:`CPU ${i}`,token:TOKENS[i],color:PCOLORS[i],money:1500,pos:0,isHuman:false,inJail:false,jailTurns:0,bankrupt:false,properties:[]});
+  return p;
+}
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let S={
+  screen:"menu",numCPU:2,players:[],owned:{},houses:{},mortgaged:{},
+  cur:0,pawnPos:{},dice:[1,1],rolling:false,phase:"roll",
+  log:[],toast:null,freePot:0,spaceInfo:null,
+  tradeModal:null,tradeDraft:null,manageModal:false,
+  savedSlots:[null,null,null],showSavePanel:false,saveMsg:null,
+  chanceCards:shuffle(CHANCE),chestCards:shuffle(CHEST),
+  chanceIdx:0,chestIdx:0,animating:false,winner:null,
+};
+
+// ─── RENDER ENGINE ───────────────────────────────────────────────────────────
+function h(tag,attrs,...children){
+  const el=tag==="svg"?document.createElementNS("http://www.w3.org/2000/svg","svg"):document.createElement(tag);
+  if(attrs)Object.entries(attrs).forEach(([k,v])=>{
+    if(k==="style"&&typeof v==="object")Object.assign(el.style,v);
+    else if(k.startsWith("on")&&typeof v==="function")el.addEventListener(k.slice(2).toLowerCase(),v);
+    else if(k==="className")el.className=v;
+    else if(k!==null&&v!==null&&v!==false&&v!==undefined)el.setAttribute(k,v);
+  });
+  children.flat(Infinity).forEach(c=>{
+    if(c==null||c===false||c===undefined)return;
+    el.appendChild(typeof c==="string"||typeof c==="number"?document.createTextNode(String(c)):c);
+  });
+  return el;
+}
+function div(s,...c){return h("div",{style:s},...c);}
+function btn(s,onClick,disabled,...c){
+  const b=h("button",{style:{...s,opacity:disabled?0.5:1,cursor:disabled?"not-allowed":"pointer"},onCLICK:null},...c);
+  if(!disabled)b.addEventListener("click",onClick);
+  return b;
+}
+
+let _renderPending=false;
+function render(){
+  if(_renderPending)return;
+  _renderPending=true;
+  requestAnimationFrame(()=>{_renderPending=false;_doRender();});
+}
+function _doRender(){
+  const root=document.getElementById("root");
+  root.innerHTML="";
+  root.appendChild(S.screen==="menu"?renderMenu():renderGame());
+}
+
+// ─── TOAST ───────────────────────────────────────────────────────────────────
+let _toastTimer=null;
+function showToast(msg,color="#FFD700"){
+  S.toast={msg,color};render();
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>{S.toast=null;render();},2600);
+}
+function showSaveMsg(msg,color="#4caf50"){
+  S.saveMsg={msg,color};render();
+  setTimeout(()=>{S.saveMsg=null;render();},2500);
+}
+
+// ─── SAVE/LOAD ───────────────────────────────────────────────────────────────
+function saveGame(slot){
+  try{
+    const state=JSON.stringify({
+      date:new Date().toLocaleString("nl-NL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}),
+      players:S.players,owned:S.owned,houses:S.houses,mortgaged:S.mortgaged,
+      cur:S.cur,dice:S.dice,phase:S.phase,log:S.log,pawnPos:S.pawnPos,freePot:S.freePot,
+      chanceIdx:S.chanceIdx,chestIdx:S.chestIdx,
+    });
+    localStorage.setItem(`prx_save_${slot}`,state);
+    const d=JSON.parse(state);
+    S.savedSlots[slot]={date:d.date,names:S.players.map(p=>p.name).join(", ")};
+    showSaveMsg(`✅ Opgeslagen in slot ${slot+1}!`);
+  }catch(e){showSaveMsg("❌ Opslaan mislukt.","#f44");}
+}
+function loadGame(slot){
+  try{
+    const raw=localStorage.getItem(`prx_save_${slot}`);
+    if(!raw){showSaveMsg("❌ Geen save gevonden.","#f44");return;}
+    const d=JSON.parse(raw);
+    S.players=d.players;S.owned=d.owned;S.houses=d.houses;S.mortgaged=d.mortgaged||{};
+    S.cur=d.cur;S.dice=d.dice||[1,1];S.phase=d.phase||"roll";S.log=d.log||[];
+    S.pawnPos=d.pawnPos||{};S.freePot=d.freePot||0;
+    S.chanceIdx=d.chanceIdx||0;S.chestIdx=d.chestIdx||0;
+    S.winner=null;S.screen="game";S.showSavePanel=false;
+    showSaveMsg("✅ Spel geladen!");render();
+  }catch(e){showSaveMsg("❌ Laden mislukt.","#f44");}
+}
+function loadSavedSlotMeta(){
+  S.savedSlots=[0,1,2].map(i=>{
+    try{const r=localStorage.getItem(`prx_save_${i}`);if(!r)return null;const d=JSON.parse(r);return{date:d.date,names:d.players?.map(p=>p.name).join(", ")};}catch{return null;}
+  });
+}
+
+// ─── CARD LOGIC ──────────────────────────────────────────────────────────────
+function applyCard(pc,pid,result,oc){
+  if(result.money)pc[pid]={...pc[pid],money:pc[pid].money+result.money};
+  if(result.moveTo!=null)pc[pid]={...pc[pid],pos:result.moveTo};
+  if(result.moveBack)pc[pid]={...pc[pid],pos:((pc[pid].pos-result.moveBack)+40)%40};
+  if(result.goToJail)pc[pid]={...pc[pid],pos:10,inJail:true,jailTurns:0};
+  if(result.collectFromAll)pc.forEach((_,i)=>{if(i!==pid&&!pc[i].bankrupt){pc[i]={...pc[i],money:pc[i].money-result.collectFromAll};pc[pid]={...pc[pid],money:pc[pid].money+result.collectFromAll};}});
+  if(result.moveToNearest){const rr=[5,15,25,35];pc[pid]={...pc[pid],pos:rr.find(r=>r>pc[pid].pos)||rr[0]};}
+}
+
+// ─── LANDING ─────────────────────────────────────────────────────────────────
+function processLanding(pc,oc,mort,pid,pos,diceTotal){
+  const sp=SPACES[pos];const pl=pc[pid];let ph="endturn";
+  if(sp.type==="go"){pc[pid]={...pl,money:pl.money+200};showToast("🏁 START! +€200 ontvangen 🎉");}
+  else if(sp.type==="free"){
+    if(S.freePot>0){pc[pid]={...pl,money:pl.money+S.freePot};showToast(`🅿 Vrij Parkeren! Je wint €${S.freePot}! 🎉`,"#4caf50");S.freePot=0;}
+    else showToast("🅿 Vrij Parkeren — pot is leeg.","#aaa");
+  }
+  else if(sp.type==="gotojail"){pc[pid]={...pl,pos:10,inJail:true,jailTurns:0};showToast("🚔 Naar de gevangenis!","#ff4444");}
+  else if(sp.type==="tax"){const t=sp.rent[0];pc[pid]={...pl,money:pl.money-t};S.freePot+=t;showToast(`💸 Belasting -€${t} → pot`,"#ff8800");}
+  else if(sp.type==="chest"){const card=S.chestCards[S.chestIdx%S.chestCards.length];S.chestIdx++;showToast(`🎁 ${card.t}`,"#9b59b6");applyCard(pc,pid,card.a(),oc);}
+  else if(sp.type==="chance"){const card=S.chanceCards[S.chanceIdx%S.chanceCards.length];S.chanceIdx++;showToast(`❓ ${card.t}`,"#e67e22");applyCard(pc,pid,card.a(),oc);}
+  else if(sp.type==="utility"){
+    const oid=oc[sp.id];
+    if(oid==null){ph=pl.isHuman?"buy":"endturn";if(!pl.isHuman)cpuBuy(pc,oc,pid,sp);}
+    else if(oid!==pid&&!mort[sp.id]){const cnt=Object.keys(oc).filter(k=>SPACES[+k]?.type==="utility"&&oc[k]===oid).length;const rent=diceTotal*(cnt===2?10:4);pc[pid]={...pc[pid],money:pc[pid].money-rent};pc[oid]={...pc[oid],money:pc[oid].money+rent};addLog(`${pl.name} betaalt €${rent} huur aan ${pc[oid].name}.`,"#ff4444");}
+  }
+  else if(sp.type==="railroad"){
+    const oid=oc[sp.id];
+    if(oid==null){ph=pl.isHuman?"buy":"endturn";if(!pl.isHuman)cpuBuy(pc,oc,pid,sp);}
+    else if(oid!==pid&&!mort[sp.id]){const cnt=Object.keys(oc).filter(k=>SPACES[+k]?.type==="railroad"&&oc[k]===oid).length;const rent=sp.rent[Math.min(cnt-1,3)]||25;pc[pid]={...pc[pid],money:pc[pid].money-rent};pc[oid]={...pc[oid],money:pc[oid].money+rent};addLog(`${pl.name} betaalt €${rent} huur aan ${pc[oid].name}.`,"#ff4444");}
+  }
+  else if(sp.type==="property"){
+    const oid=oc[sp.id];
+    if(oid==null){ph=pl.isHuman?"buy":"endturn";if(!pl.isHuman)cpuBuy(pc,oc,pid,sp);}
+    else if(oid!==pid&&!mort[sp.id]){const hc=S.houses[sp.id]||0;const grp=CGROUPS[sp.color]||[];const mono=grp.every(id=>oc[id]===oid);const rent=hc>0?sp.rent[Math.min(hc,5)]:(mono?sp.rent[0]*2:sp.rent[0]);pc[pid]={...pc[pid],money:pc[pid].money-rent};pc[oid]={...pc[oid],money:pc[oid].money+rent};addLog(`${pl.name} betaalt €${rent} huur aan ${pc[oid].name}.`,"#ff4444");}
+  }
+  return ph;
+}
+function cpuBuy(pc,oc,pid,sp){if(pc[pid].money>sp.price*1.1){oc[sp.id]=pid;pc[pid]={...pc[pid],money:pc[pid].money-sp.price,properties:[...pc[pid].properties,sp.id]};addLog(`${pc[pid].name} koopt ${sp.name} voor €${sp.price}.`,PCOLORS[pid]);}}
+function checkBankrupt(pc,oc){pc.forEach((p,i)=>{if(!p.bankrupt&&p.money<0){pc[i]={...p,bankrupt:true};addLog(`💀 ${p.name} is failliet!`,"#ff4444");Object.keys(oc).forEach(k=>{if(oc[k]===i)delete oc[k];});}});}
+function addLog(msg,color="#bbb"){S.log=[...S.log.slice(-80),{msg,color}];}
+
+// ─── ANIMATION ───────────────────────────────────────────────────────────────
+function animatePawn(pid,from,steps,onDone){
+  let step=0;
+  function tick(){
+    step++;S.pawnPos[pid]=(from+step)%40;render();
+    if(step<steps)setTimeout(tick,180);else setTimeout(onDone,200);
+  }
+  tick();
+}
+function animateDice(d1,d2,onDone){
+  S.rolling=true;let count=0;
+  const iv=setInterval(()=>{S.dice=[rng(),rng()];render();if(++count>10){clearInterval(iv);S.dice=[d1,d2];S.rolling=false;onDone();}},60);
+}
+
+// ─── MOVE ────────────────────────────────────────────────────────────────────
+function executeMove(pid,d1,d2,cb){
+  const total=d1+d2;const pc=S.players.map(p=>({...p}));const oc={...S.owned};const mort={...S.mortgaged};const pl=pc[pid];
+  if(pl.inJail){
+    if(d1===d2){pc[pid]={...pl,inJail:false,jailTurns:0};addLog(`${pl.name} gooit dubbel en verlaat de gevangenis!`,PCOLORS[pid]);}
+    else if(pl.jailTurns>=2){pc[pid]={...pl,inJail:false,jailTurns:0,money:pl.money-50};S.freePot+=50;addLog(`${pl.name} betaalt €50 boete → pot.`,"#aaa");}
+    else{pc[pid]={...pl,jailTurns:pl.jailTurns+1};addLog(`${pl.name} zit in gevangenis (${pl.jailTurns+1}/3).`,"#aaa");S.players=pc;S.owned=oc;S.mortgaged=mort;cb("endturn");return;}
+  }
+  const from=pc[pid].pos;const to=(from+total)%40;
+  if(to<from){pc[pid]={...pc[pid],money:pc[pid].money+200};addLog(`${pl.name} passeert START! +€200`,"#FFD700");}
+  pc[pid]={...pc[pid],pos:to};
+  addLog(`${pl.name} gooit ${d1}+${d2}=${total} → ${SPACES[to].name}`,PCOLORS[pid]);
+  S.players=pc;S.owned=oc;S.mortgaged=mort;
+  animatePawn(pid,from,total,()=>{
+    S.pawnPos[pid]=to;
+    const np=processLanding(S.players,S.owned,S.mortgaged,pid,to,total);
+    checkBankrupt(S.players,S.owned);
+    const active=S.players.filter(p=>!p.bankrupt);
+    if(active.length===1&&S.players.length>1)S.winner=active[0];
+    render();cb(np);
+  });
+}
+
+// ─── TURN MANAGEMENT ─────────────────────────────────────────────────────────
+function doNextTurn(fromCur){
+  const active=S.players.filter(p=>!p.bankrupt);if(active.length<=1)return;
+  let next=(fromCur+1)%S.players.length;
+  while(S.players[next]?.bankrupt)next=(next+1)%S.players.length;
+  S.cur=next;S.phase="roll";render();
+  if(!S.players[next].isHuman)setTimeout(()=>runCPU(next),700);
+}
+
+function handleRoll(){
+  if(S.phase!=="roll"||S.animating||S.rolling)return;
+  S.animating=true;const d1=rng(),d2=rng();
+  animateDice(d1,d2,()=>{executeMove(S.cur,d1,d2,np=>{S.phase=np;S.animating=false;render();});});
+}
+
+function handleBailOut(){
+  if(!S.players[S.cur]?.inJail||S.players[S.cur].money<50)return;
+  S.players=S.players.map((p,i)=>i===S.cur?{...p,inJail:false,jailTurns:0,money:p.money-50}:p);
+  S.freePot+=50;addLog(`Jij betaalt €50 borgtocht → pot.`,PCOLORS[S.cur]);
+  showToast("🔓 Vrijgekocht voor €50!","#FFD700");render();
+}
+function handleBuy(){
+  const sp=SPACES[S.players[S.cur].pos];
+  if(S.players[S.cur].money<sp.price){addLog("Niet genoeg geld!","#f44");S.phase="endturn";render();return;}
+  S.owned[sp.id]=S.cur;
+  S.players=S.players.map((p,i)=>i===S.cur?{...p,money:p.money-sp.price,properties:[...p.properties,sp.id]}:p);
+  addLog(`Je koopt ${sp.name} voor €${sp.price}.`,PCOLORS[S.cur]);S.phase="endturn";render();
+}
+function handleSkip(){addLog(`Je koopt ${SPACES[S.players[S.cur].pos].name} niet.`,"#888");S.phase="endturn";render();}
+function handleEndTurn(){S.manageModal=false;S.tradeDraft=null;doNextTurn(S.cur);}
+
+// ─── CPU LOGIC ───────────────────────────────────────────────────────────────
+function computeCPUTrade(fromId){
+  const from=S.players[fromId];if(!from||from.bankrupt)return null;
+  for(const[color,group]of Object.entries(CGROUPS)){
+    const myIds=group.filter(id=>S.owned[id]===fromId);
+    const theirMap={};
+    group.forEach(id=>{const oid=S.owned[id];if(oid!=null&&oid!==fromId){theirMap[oid]=theirMap[oid]||[];theirMap[oid].push(id);}});
+    if(myIds.length===group.length-1&&Object.keys(theirMap).length===1){
+      const targetId=Number(Object.keys(theirMap)[0]);const needed=theirMap[targetId];
+      if(needed.length===1&&!S.houses[needed[0]]){
+        const offerCands=from.properties.filter(id=>{
+          if(S.houses[id])return false;const sp=SPACES[id];
+          if(sp.type!=="property"&&sp.type!=="railroad")return false;
+          const grp=CGROUPS[sp.color]||[];
+          return!(grp.length>0&&grp.every(gid=>S.owned[gid]===fromId));
+        });
+        if(offerCands.length>0){
+          const offer=offerCands.sort((a,b)=>SPACES[a].price-SPACES[b].price)[0];
+          const diff=SPACES[needed[0]].price-SPACES[offer].price;
+          return{targetPlayerId:targetId,offer:[offer],request:needed,moneyOffer:diff>0?diff:0,moneyRequest:diff<0?-diff:0};
+        }
+      }
+    }
+  }
+  return null;
+}
+function cpuAcceptsTrade(targetId,offer,request,moneyOffer,moneyRequest){
+  const offerVal=offer.reduce((s,id)=>s+SPACES[id].price,0)+moneyOffer;
+  const reqVal=request.reduce((s,id)=>s+SPACES[id].price,0)+moneyRequest;
+  if(offerVal<reqVal*0.8)return false;
+  let helps=false;
+  for(const id of offer){const grp=CGROUPS[SPACES[id].color]||[];if(grp.length>0){const will=grp.filter(gid=>S.owned[gid]===targetId||offer.includes(gid));if(will.length===grp.length)helps=true;}}
+  return helps||offerVal>=reqVal;
+}
+function executeTrade(offerIds,requestIds,moneyOffer,moneyRequest,fromId,toId){
+  S.players=S.players.map((p,i)=>{
+    if(i===fromId)return{...p,properties:[...p.properties.filter(x=>!offerIds.includes(x)),...requestIds],money:p.money-moneyOffer+moneyRequest};
+    if(i===toId)return{...p,properties:[...p.properties.filter(x=>!requestIds.includes(x)),...offerIds],money:p.money-moneyRequest+moneyOffer};
+    return p;
+  });
+  offerIds.forEach(id=>{S.owned[id]=toId;});
+  requestIds.forEach(id=>{S.owned[id]=fromId;});
+}
+
+function runCPU(pid){
+  if(S.animating)return;S.animating=true;const d1=rng(),d2=rng();
+  animateDice(d1,d2,()=>{
+    executeMove(pid,d1,d2,_=>{
+      // build houses
+      S.players[pid].properties.forEach(sid=>{
+        const sp=SPACES[sid];if(sp.type!=="property"||S.mortgaged[sid])return;
+        const grp=CGROUPS[sp.color]||[];if(!grp.every(id=>S.owned[id]===pid&&!S.mortgaged[id]))return;
+        const h=S.houses[sid]||0;const min=Math.min(...grp.map(id=>S.houses[id]||0));
+        if(h>min||h>=5)return;
+        if(S.players[pid].money>sp.houseCost*3){S.houses[sid]=(S.houses[sid]||0)+1;S.players[pid]={...S.players[pid],money:S.players[pid].money-sp.houseCost};addLog(`${S.players[pid].name} bouwt huis op ${sp.name}.`,PCOLORS[pid]);}
+      });
+      // trade
+      const tradeOffer=computeCPUTrade(pid);
+      if(tradeOffer){
+        const{targetPlayerId,offer,request,moneyOffer,moneyRequest}=tradeOffer;
+        if(cpuAcceptsTrade(targetPlayerId,offer,request,moneyOffer,moneyRequest)){
+          executeTrade(offer,request,moneyOffer,moneyRequest,pid,targetPlayerId);
+          addLog(`${S.players[pid].name} ruilt met ${S.players[targetPlayerId].name}! ✅`,PCOLORS[pid]);
+        }
+      }
+      S.animating=false;render();setTimeout(()=>doNextTurn(pid),400);
+    });
+  });
+}
+
+// ─── PROPERTY MANAGEMENT ─────────────────────────────────────────────────────
+function canBuildHouse(sid){const sp=SPACES[sid];if(sp.type!=="property"||S.owned[sid]!==S.cur||S.mortgaged[sid])return false;const grp=CGROUPS[sp.color]||[];if(!grp.every(id=>S.owned[id]===S.cur&&!S.mortgaged[id]))return false;const h=S.houses[sid]||0;if(h>=5)return false;const min=Math.min(...grp.map(id=>S.houses[id]||0));return h<=min&&S.players[S.cur].money>=sp.houseCost;}
+function canSellHouse(sid){const sp=SPACES[sid];if(sp.type!=="property"||S.owned[sid]!==S.cur)return false;const h=S.houses[sid]||0;if(h===0)return false;const grp=CGROUPS[sp.color]||[];const max=Math.max(...grp.map(id=>S.houses[id]||0));return h===max;}
+function canMortgage(sid){if(S.owned[sid]!==S.cur||S.mortgaged[sid])return false;if(SPACES[sid].type==="property"){const grp=CGROUPS[SPACES[sid].color]||[];if(grp.some(id=>S.houses[id]>0))return false;}return true;}
+function canUnmortgage(sid){return S.owned[sid]===S.cur&&S.mortgaged[sid]&&S.players[S.cur].money>=Math.floor(SPACES[sid].mortgage*1.1);}
+
+function doBuildHouse(sid){const sp=SPACES[sid];S.houses[sid]=(S.houses[sid]||0)+1;S.players=S.players.map((p,i)=>i===S.cur?{...p,money:p.money-sp.houseCost}:p);addLog(`Je bouwt een ${S.houses[sid]>=5?"hotel":"huis"} op ${sp.name}.`,PCOLORS[S.cur]);render();}
+function doSellHouse(sid){const sp=SPACES[sid];const sell=Math.floor(sp.houseCost/2);S.houses[sid]--;S.players=S.players.map((p,i)=>i===S.cur?{...p,money:p.money+sell}:p);addLog(`Je verkoopt een huis op ${sp.name} voor €${sell}.`,PCOLORS[S.cur]);render();}
+function doMortgage(sid){const sp=SPACES[sid];S.mortgaged[sid]=true;S.players=S.players.map((p,i)=>i===S.cur?{...p,money:p.money+sp.mortgage}:p);addLog(`Je hypotheekt ${sp.name} voor €${sp.mortgage}.`,PCOLORS[S.cur]);render();}
+function doUnmortgage(sid){const sp=SPACES[sid];const cost=Math.floor(sp.mortgage*1.1);S.mortgaged[sid]=false;S.players=S.players.map((p,i)=>i===S.cur?{...p,money:p.money-cost}:p);addLog(`Je lost ${sp.name} hypotheek af voor €${cost}.`,PCOLORS[S.cur]);render();}
+
+// ─── TRADE ACTIONS ───────────────────────────────────────────────────────────
+function submitTrade(){
+  const{targetId,offerIds,requestIds,moneyOffer,moneyRequest}=S.tradeDraft;
+  if(offerIds.length===0&&requestIds.length===0&&moneyOffer===0&&moneyRequest===0){showToast("Voeg iets toe aan het aanbod!","#f44");return;}
+  const target=S.players[targetId];
+  S.tradeDraft=null;
+  if(!target.isHuman){
+    const acc=cpuAcceptsTrade(targetId,offerIds,requestIds,moneyOffer,moneyRequest);
+    if(acc){executeTrade(offerIds,requestIds,moneyOffer,moneyRequest,S.cur,targetId);addLog(`${target.name} accepteert de ruil! ✅`,PCOLORS[targetId]);showToast(`${target.name} accepteert! ✅`,"#4caf50");}
+    else{addLog(`${target.name} weigert de ruil.`,PCOLORS[targetId]);showToast(`${target.name} weigert de ruil.`,"#ff4444");}
+    render();
+  } else {
+    S.tradeModal={fromId:S.cur,targetId,offerIds,requestIds,moneyOffer,moneyRequest};render();
+  }
+}
+
+// ─── START GAME ──────────────────────────────────────────────────────────────
+function startGame(){
+  const p=initPlayers(S.numCPU);const pp={};p.forEach(pl=>{pp[pl.id]=0;});
+  S.players=p;S.pawnPos=pp;S.owned={};S.houses={};S.mortgaged={};
+  S.cur=0;S.phase="roll";S.log=[];S.freePot=0;S.winner=null;
+  S.tradeDraft=null;S.tradeModal=null;S.manageModal=false;
+  S.chanceCards=shuffle(CHANCE);S.chestCards=shuffle(CHEST);S.chanceIdx=0;S.chestIdx=0;
+  S.screen="game";render();
+}
+
+// ─── RENDER MENU ─────────────────────────────────────────────────────────────
+function renderMenu(){
+  loadSavedSlotMeta();
+  const slotRows=S.savedSlots.map((sl,i)=>
+    div({display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px",background:"rgba(255,255,255,0.04)",borderRadius:"8px",padding:"8px 10px",border:"1px solid #2a4a2a"},
+      div({flex:1},
+        div({fontSize:"11px",color:"#FFD700",fontWeight:"bold"},`Slot ${i+1}`),
+        sl?div({fontSize:"10px",color:"#aaa",lineHeight:1.5},sl.date," — ",sl.names):div({fontSize:"10px",color:"#555",fontStyle:"italic"},"Leeg")
+      ),
+      btn({padding:"7px 12px",fontSize:"12px",background:sl?"#1a6e1a":"#222",color:sl?"#fff":"#555",border:"none",borderRadius:"7px"},()=>loadGame(i),!sl,"📂 Laden")
+    )
+  );
+  const cpuBtns=[1,2,3].map(n=>btn({padding:"9px 20px",borderRadius:"8px",border:`2px solid ${S.numCPU===n?"#FFD700":"#4a8a4a"}`,background:S.numCPU===n?"#FFD700":"transparent",color:S.numCPU===n?"#000":"#fff",fontSize:"18px",fontWeight:"bold"},()=>{S.numCPU=n;render();},false,String(n)));
+  const tokenList=Array.from({length:S.numCPU+1},(_,i)=>div({fontSize:"11px",color:"#aaa",lineHeight:"1.8"},`${TOKENS[i]} ${i===0?"Jij (Rood)":`CPU ${i} (${["","Blauw","Groen","Oranje"][i]})`}`));
+  return div({minHeight:"100vh",background:"linear-gradient(135deg,#1a3a1a,#2d5a27)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Georgia,serif",padding:"16px"},
+    div({background:"rgba(0,0,0,0.7)",borderRadius:"20px",padding:"28px 20px",textAlign:"center",color:"#fff",maxWidth:"340px",width:"100%",border:"2px solid #4a8a4a"},
+      div({fontSize:"48px",marginBottom:"4px"},"🏙️"),
+      h("h1",{style:{fontSize:"28px",fontWeight:"bold",color:"#FFD700",margin:"0 0 2px",letterSpacing:"3px"}},"PROPERTIX"),
+      div({color:"#aaa",fontSize:"11px",marginBottom:"20px"},"Het klassieke vastgoedspel"),
+      S.saveMsg?div({background:"rgba(0,0,0,0.5)",color:S.saveMsg.color,border:`1px solid ${S.saveMsg.color}`,borderRadius:"8px",padding:"8px 12px",marginBottom:"14px",fontSize:"13px"},S.saveMsg.msg):null,
+      div({background:"rgba(255,255,255,0.04)",border:"1px solid #3a6a3a",borderRadius:"12px",padding:"14px 12px",marginBottom:"14px"},
+        div({fontSize:"13px",color:"#FFD700",fontWeight:"bold",marginBottom:"10px"},"🆕 Nieuw spel"),
+        div({color:"#ccc",fontSize:"12px",marginBottom:"8px"},"Aantal computerspelers:"),
+        div({display:"flex",gap:"8px",justifyContent:"center",marginBottom:"12px"},...cpuBtns),
+        div({marginBottom:"12px"},...tokenList),
+        btn({width:"100%",padding:"13px 0",fontSize:"16px",fontWeight:"bold",background:"#FFD700",color:"#000",border:"none",borderRadius:"10px"},startGame,false,"▶ Spel starten")
+      ),
+      div({background:"rgba(255,255,255,0.04)",border:"1px solid #3a6a3a",borderRadius:"12px",padding:"14px 12px"},
+        div({fontSize:"13px",color:"#FFD700",fontWeight:"bold",marginBottom:"10px"},"💾 Opgeslagen spellen"),
+        ...slotRows
+      )
+    )
+  );
+}
+
+// ─── RENDER GAME ─────────────────────────────────────────────────────────────
+function renderGame(){
+  const curP=S.players[S.cur];const curSp=curP?SPACES[curP.pos]:null;const inJail=!!curP?.inJail;
+  const humanProps=curP?.isHuman?curP.properties:[];
+  const otherActive=S.players.filter((p,i)=>i!==S.cur&&!p.bankrupt);
+
+  // Top bar
+  const topBar=div({background:"#071207",borderBottom:"1px solid #2a4a2a",padding:"5px 8px",display:"flex",gap:"6px",overflowX:"auto",flexShrink:0,alignItems:"center"},
+    ...S.players.map((p,i)=>div({background:S.cur===i&&!p.bankrupt?"rgba(255,215,0,0.12)":"rgba(255,255,255,0.04)",border:`1px solid ${S.cur===i&&!p.bankrupt?"#FFD700":"#2a4a2a"}`,borderRadius:"8px",padding:"4px 8px",flexShrink:0,opacity:p.bankrupt?0.3:1},
+      div({display:"flex",alignItems:"center",gap:"3px"},
+        div({fontSize:"13px"},p.token),
+        div({fontSize:"10px",color:PCOLORS[i],fontWeight:"bold"},p.name),
+        S.cur===i&&!p.bankrupt?div({fontSize:"9px",color:"#FFD700"},"▶"):null
+      ),
+      div({fontSize:"11px",color:"#4caf50",fontWeight:"bold"},`€${p.money}`),
+      p.inJail?div({fontSize:"8px",color:"#ff8800"},"🔒 cel"):null
+    )),
+    btn({marginLeft:"auto",flexShrink:0,padding:"6px 10px",background:"rgba(255,215,0,0.1)",border:"1px solid #4a8a4a",borderRadius:"8px",color:"#FFD700",fontSize:"11px",fontWeight:"bold"},()=>{S.showSavePanel=true;render();},false,"💾")
+  );
+
+  // Board
+  const boardWrap=div({flex:1,overflow:"auto",WebkitOverflowScrolling:"touch",padding:"8px",position:"relative",id:"boardScroll"});
+  const boardDiv=div({position:"relative",width:BOARD+"px",height:BOARD+"px",margin:"0 auto"});
+
+  // Space cells
+  SPACES.forEach(sp=>{
+    const[col,row]=gridPos(sp.id);const sz=cellSz(sp.id);
+    const isCorner=[0,10,20,30].includes(sp.id);
+    const isBottom=row===10,isLeft=col===0,isTop=row===0;
+    const isCurrentSpace=S.players.some(p=>p.pos===sp.id&&!p.bankrupt);
+    const oid=S.owned[sp.id];const h=S.houses[sp.id]||0;
+    const cb=sp.color?CMAP[sp.color]:null;const isMort=S.mortgaged[sp.id];
+    const cell=div({position:"absolute",left:cellPx(col)+"px",top:cellPx(row)+"px",width:sz+"px",height:sz+"px",boxSizing:"border-box",border:`1px solid ${isCurrentSpace?"#FFD700":"#3a5a3a"}`,background:isMort?"#e8e0d0":isCurrentSpace?"#fffde7":"#e8f5e9",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",overflow:"hidden",fontSize:"5.5px",cursor:"pointer",zIndex:isCurrentSpace?2:1,transition:"background 0.2s"},
+      cb?div({position:"absolute",...(isBottom?{top:0,left:0,right:0,height:"8px"}:isLeft?{right:0,top:0,bottom:0,width:"8px"}:isTop?{bottom:0,left:0,right:0,height:"8px"}:{left:0,top:0,bottom:0,width:"8px"}),background:isMort?"#bbb":cb}):null,
+      div({fontSize:isCorner?"16px":"10px",lineHeight:1},sp.type==="go"?"🏁":sp.type==="jail"?"🔒":sp.type==="gotojail"?"👮":sp.type==="free"?"🅿":sp.type==="tax"?"💸":sp.type==="chest"?"🎁":sp.type==="chance"?"❓":sp.type==="railroad"?"🚂":sp.type==="utility"?(sp.id===12?"⚡":"💧"):""),
+      div({textAlign:"center",lineHeight:1.2,fontSize:isCorner?"6.5px":"5px",fontWeight:700,color:isMort?"#999":"#1a3a1a",padding:"0 1px",marginTop:"1px",wordBreak:"break-word"},sp.name),
+      sp.price>0?div({fontSize:"5px",color:"#555"},`€${sp.price}`):null,
+      isMort?div({fontSize:"5px",color:"#c62828",fontWeight:"bold"},"HYPO"):null,
+      oid!=null&&!isMort?div({width:"5px",height:"5px",borderRadius:"50%",background:PCOLORS[oid],border:"1px solid #fff",marginTop:"1px"}):null,
+      sp.id===20&&S.freePot>0?div({fontSize:"5px",color:"#4caf50",fontWeight:"bold"},`€${S.freePot}`):null,
+      // Houses: green squares or hotel
+      h>0?(h>=5?div({fontSize:"6.5px",lineHeight:1,marginTop:"1px"},"🏨"):div({display:"flex",flexWrap:"wrap",gap:"1px",justifyContent:"center",marginTop:"1px",maxWidth:isCorner?"24px":"18px"},...Array.from({length:h},(_,hi)=>div({width:isCorner?"5px":"4px",height:isCorner?"5px":"4px",borderRadius:"1px",background:"#1b5e20",border:"1px solid #fff",flexShrink:0})))):null
+    );
+    cell.addEventListener("click",()=>{S.spaceInfo=sp.id;render();});
+    boardDiv.appendChild(cell);
+  });
+
+  // Floating pawns
+  S.players.forEach((p,i)=>{
+    if(p.bankrupt)return;
+    const sid=S.pawnPos[i]??0;const c=spaceCenter(sid);
+    const offsets=[[0,-8],[8,4],[-8,4],[0,10]];const[ox,oy]=offsets[i]||[0,0];
+    const pawnEl=div({position:"absolute",left:(c.x+ox-18)+"px",top:(c.y+oy-18)+"px",width:"36px",height:"36px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"24px",filter:"drop-shadow(0 2px 6px rgba(0,0,0,0.9))",transition:"left 0.17s ease, top 0.17s ease",zIndex:10,pointerEvents:"none"},p.token);
+    if(S.cur===i){const lbl=div({position:"absolute",top:"32px",left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,0.8)",color:PCOLORS[i],fontSize:"8px",fontWeight:"bold",borderRadius:"4px",padding:"1px 5px",whiteSpace:"nowrap",border:`1px solid ${PCOLORS[i]}`},p.name);pawnEl.appendChild(lbl);}
+    boardDiv.appendChild(pawnEl);
+  });
+
+  // Center panel
+  const dieEls=S.dice.map(val=>{
+    const DOTS={1:[[50,50]],2:[[25,25],[75,75]],3:[[25,25],[50,50],[75,75]],4:[[25,25],[75,25],[25,75],[75,75]],5:[[25,25],[75,25],[50,50],[25,75],[75,75]],6:[[25,20],[75,20],[25,50],[75,50],[25,80],[75,80]]};
+    const d=div({width:"52px",height:"52px",background:"#fff",borderRadius:"10px",border:"2px solid #ccc",position:"relative",boxShadow:"0 3px 8px rgba(0,0,0,0.4)",flexShrink:0});
+    if(S.rolling)d.style.animation="spin 0.08s linear infinite";
+    (DOTS[val]||DOTS[1]).forEach(([cx,cy])=>{const dot=div({position:"absolute",left:`${cx}%`,top:`${cy}%`,transform:"translate(-50%,-50%)",width:"10px",height:"10px",borderRadius:"50%",background:"#222"});d.appendChild(dot);});
+    return d;
+  });
+  const centerDiv=div({position:"absolute",left:CORNER+"px",top:CORNER+"px",width:(CELL*9)+"px",height:(CELL*9)+"px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"radial-gradient(circle,#1a4a1a,#091409)",pointerEvents:"none",gap:"4px"},
+    div({fontSize:"14px",fontWeight:"bold",color:"#FFD700",letterSpacing:"3px"},"PROPERTIX"),
+    div({display:"flex",gap:"10px",marginTop:"4px"},...dieEls),
+    div({fontSize:"10px",color:"#aaa",marginTop:"4px",textAlign:"center"},S.rolling?"Gooien...":curP?.isHuman?"Jij bent aan de beurt":`${curP?.name||""} is aan de beurt`),
+    S.freePot>0?div({fontSize:"9px",color:"#4caf50",marginTop:"2px"},`🅿 Pot: €${S.freePot}`):null
+  );
+  boardDiv.appendChild(centerDiv);
+  boardWrap.appendChild(boardDiv);
+
+  // Scroll to current player after render
+  requestAnimationFrame(()=>{
+    const scroll=document.getElementById("boardScroll");
+    if(!scroll||!curP)return;
+    const sid=S.pawnPos[S.cur]??curP.pos;
+    const{x,y}=spaceCenter(sid);
+    scroll.scrollTo({left:x-scroll.clientWidth/2,top:y-scroll.clientHeight/2,behavior:"smooth"});
+  });
+
+  // Bottom bar
+  const curSpaceLabel=curSp&&curP?.isHuman&&!S.rolling?div({textAlign:"center",fontSize:"12px",color:"#ccc",marginBottom:"6px"},
+    "Jij staat op: ",h("b",{style:{color:"#FFD700"}},curSp.name),curSp.price>0?` — €${curSp.price}`:"",inJail?h("span",{style:{color:"#ff8800"}}," 🔒"):null):null;
+
+  let actionBtns=[];
+  if(S.phase==="roll"&&curP?.isHuman){
+    actionBtns.push(btn({flex:"1 1 auto",maxWidth:"220px",padding:"14px 0",fontSize:"16px",fontWeight:"bold",background:S.rolling||S.animating?"#555":"#FFD700",color:S.rolling||S.animating?"#999":"#000",border:"none",borderRadius:"10px"},handleRoll,S.rolling||S.animating,S.rolling?"🎲 Gooien...":inJail?"🎲 Gooi dubbel (gratis)":"🎲 Dobbelstenen gooien"));
+    if(inJail&&!S.rolling)actionBtns.push(btn({flex:"1 1 auto",maxWidth:"170px",padding:"14px 0",fontSize:"13px",fontWeight:"bold",background:S.players[S.cur].money>=50?"#b71c1c":"#333",color:S.players[S.cur].money>=50?"#fff":"#666",border:"none",borderRadius:"10px"},handleBailOut,S.players[S.cur].money<50,"🔓 Vrijkopen (€50)"));
+  } else if(S.phase==="buy"&&curP?.isHuman&&curSp){
+    actionBtns.push(btn({flex:"1 1 auto",padding:"13px 0",fontSize:"15px",fontWeight:"bold",background:"#2e7d32",color:"#fff",border:"none",borderRadius:"10px"},handleBuy,false,`✅ Kopen (€${curSp.price})`));
+    actionBtns.push(btn({flex:"1 1 auto",padding:"13px 0",fontSize:"15px",background:"#424242",color:"#fff",border:"none",borderRadius:"10px"},handleSkip,false,"❌ Niet kopen"));
+  } else if(S.phase==="endturn"&&curP?.isHuman){
+    actionBtns.push(btn({flex:"1 1 auto",maxWidth:"160px",padding:"13px 0",fontSize:"13px",fontWeight:"bold",background:"#1a3a1a",color:"#FFD700",border:"1px solid #FFD700",borderRadius:"10px"},()=>{S.manageModal=true;render();},false,"🏗️ Beheren/Ruilen"));
+    actionBtns.push(btn({flex:"1 1 auto",maxWidth:"200px",padding:"13px 0",fontSize:"15px",fontWeight:"bold",background:"#1a6e1a",color:"#fff",border:"none",borderRadius:"10px"},handleEndTurn,false,"➡️ Beurt beëindigen"));
+  } else if(!curP?.isHuman){
+    actionBtns.push(div({color:"#666",fontSize:"13px",padding:"13px 0",textAlign:"center",width:"100%"},`${curP?.name} speelt... ⏳`));
+  }
+
+  const logLines=S.log.slice(-3).reverse().map(e=>div({fontSize:"10px",color:e.color,lineHeight:"1.45"},e.msg));
+  const bottomBar=div({background:"#071207",borderTop:"2px solid #2a4a2a",padding:"8px 12px",flexShrink:0},
+    curSpaceLabel,
+    div({display:"flex",gap:"8px",flexWrap:"wrap",justifyContent:"center"},...actionBtns),
+    div({marginTop:"7px",borderTop:"1px solid #0d1a0d",paddingTop:"5px"},...logLines)
+  );
+
+  // Overlays
+  const overlays=[];
+
+  // Toast
+  if(S.toast)overlays.push(div({position:"fixed",bottom:"190px",left:"50%",background:"rgba(0,0,0,0.88)",color:S.toast.color,border:`1px solid ${S.toast.color}`,borderRadius:"12px",padding:"10px 18px",fontSize:"13px",fontWeight:"bold",zIndex:100,maxWidth:"85vw",textAlign:"center",animation:"toastIn 2.6s ease forwards",pointerEvents:"none",transform:"translateX(-50%)"},S.toast.msg));
+
+  // Winner
+  if(S.winner)overlays.push(div({position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"},
+    div({background:"#1a3a1a",border:"3px solid #FFD700",borderRadius:"20px",padding:"40px",textAlign:"center",maxWidth:"300px"},
+      div({fontSize:"52px"},S.winner.token),
+      h("h2",{style:{color:"#FFD700",fontSize:"24px",margin:"12px 0 6px"}},`${S.winner.name} wint!`),
+      div({color:"#aaa",marginBottom:"20px"},`Eindsaldo: €${S.winner.money}`),
+      btn({padding:"12px 28px",background:"#FFD700",color:"#000",border:"none",borderRadius:"8px",fontSize:"15px",fontWeight:"bold"},()=>{S.screen="menu";render();},false,"Nieuw spel")
+    )
+  ));
+
+  // Space info modal
+  if(S.spaceInfo!==null){
+    const sp=SPACES[S.spaceInfo];const oid=S.owned[S.spaceInfo];const owner=oid!=null?S.players[oid]:null;
+    const h2=S.houses[S.spaceInfo]||0;const grp=CGROUPS[sp.color]||[];const mono=grp.length>0&&grp.every(id=>S.owned[id]===oid);
+    const cb=sp.color?CMAP[sp.color]:null;const isMort=S.mortgaged[S.spaceInfo];
+    let rows=[];
+    if(sp.type==="property"){
+      rows=["Zonder huis","1 huis","2 huizen","3 huizen","4 huizen","Hotel"].map((label,i)=>{
+        const isAct=h2===i;const rv=(i===0&&mono&&oid!=null)?sp.rent[0]*2:sp.rent[i];
+        const tr=h("tr",{style:{background:isAct?"rgba(255,215,0,0.12)":"transparent",borderBottom:"1px solid #1a3a1a"}});
+        tr.appendChild(h("td",{style:{padding:"5px 4px",color:isAct?"#FFD700":"#ccc"}},`${i===0&&mono&&oid!=null?"Zonder huis (monopoly)":label}${isAct?" ◀":""}`));
+        tr.appendChild(h("td",{style:{textAlign:"right",padding:"5px 4px",color:isAct?"#FFD700":"#fff",fontWeight:isAct?"bold":"normal"}},`€${rv}`));
+        return tr;
+      });
+    }
+    const infoPanel=div({background:"#0f2a0f",borderRadius:"20px 20px 0 0",padding:"20px 20px 32px",width:"100%",maxWidth:"440px",color:"#fff",maxHeight:"75vh",overflowY:"auto"},
+      cb?div({height:"10px",background:cb,borderRadius:"8px",marginBottom:"12px"}):null,
+      div({display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"},
+        h("h2",{style:{margin:0,fontSize:"20px",color:"#FFD700"}},sp.name+(isMort?" 🏦":"")),
+        btn({background:"none",border:"none",color:"#888",fontSize:"22px",lineHeight:1},()=>{S.spaceInfo=null;render();},false,"✕")
+      ),
+      isMort?div({background:"rgba(198,40,40,0.15)",border:"1px solid #c62828",borderRadius:"8px",padding:"6px 10px",marginBottom:"8px",fontSize:"12px",color:"#ef9a9a"},"⚠️ Hypotheek actief — geen huur te innen"):null,
+      owner?div({marginBottom:"8px",fontSize:"13px",color:PCOLORS[oid]},`Eigenaar: ${owner.token} ${owner.name}${mono?" ✦ Monopoly":""}`):null,
+      !owner&&sp.price>0?div({marginBottom:"8px",fontSize:"13px",color:"#aaa"},"Te koop voor ",h("b",{style:{color:"#FFD700"}},`€${sp.price}`)):null,
+      sp.type==="free"?div({fontSize:"14px",color:"#4caf50",marginBottom:"8px"},`🅿 Huidige pot: €${S.freePot}`):null,
+      sp.type==="property"&&rows.length>0?h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px",marginBottom:"10px"}},
+        h("thead",null,h("tr",{style:{borderBottom:"1px solid #2a4a2a"}},h("th",{style:{textAlign:"left",padding:"4px 0",color:"#aaa",fontWeight:"normal"}},"Situatie"),h("th",{style:{textAlign:"right",padding:"4px 0",color:"#aaa",fontWeight:"normal"}},"Huur"))),
+        h("tbody",null,...rows)
+      ):null,
+      sp.type==="property"?div({fontSize:"12px",color:"#aaa",borderTop:"1px solid #2a4a2a",paddingTop:"8px"},`🏠 Huis: €${sp.houseCost} | Verkoop: €${Math.floor(sp.houseCost/2)} | Hypotheek: €${sp.mortgage}`):null,
+      sp.type==="railroad"?h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"13px"}},
+        h("thead",null,h("tr",{style:{borderBottom:"1px solid #2a4a2a"}},h("th",{style:{textAlign:"left",color:"#aaa",fontWeight:"normal",padding:"4px 0"}},"Stations"),h("th",{style:{textAlign:"right",color:"#aaa",fontWeight:"normal"}},"Huur"))),
+        h("tbody",null,...["1 station","2 stations","3 stations","4 stations"].map((lbl,i)=>h("tr",{style:{borderBottom:"1px solid #1a3a1a"}},h("td",{style:{padding:"5px 4px",color:"#ccc"}},lbl),h("td",{style:{textAlign:"right",padding:"5px 4px",color:"#fff"}},`€${sp.rent[i]}`))))
+      ):null,
+      sp.type==="utility"?div({fontSize:"13px",color:"#ccc",lineHeight:"2"},"1 nutsbedrijf: worp × 4",h("br"),"2 nutsbedrijven: worp × 10"):null
+    );
+    const backdrop=div({position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:180,display:"flex",alignItems:"flex-end",justifyContent:"center"});
+    backdrop.addEventListener("click",()=>{S.spaceInfo=null;render();});
+    infoPanel.addEventListener("click",e=>e.stopPropagation());
+    backdrop.appendChild(infoPanel);
+    overlays.push(backdrop);
+  }
+
+  // Manage / trade modal
+  if(S.manageModal){
+    const items=humanProps.map(sid=>{
+      const sp=SPACES[sid];const hh=S.houses[sid]||0;const cb2=sp.color?CMAP[sp.color]:null;const isMort=S.mortgaged[sid];
+      const bOk=canBuildHouse(sid),sOk=canSellHouse(sid),mOk=canMortgage(sid),uOk=canUnmortgage(sid);
+      return div({borderRadius:"10px",border:"1px solid #1a3a1a",marginBottom:"10px",overflow:"hidden"},
+        div({background:cb2||"#1a3a1a",padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center"},
+          h("span",{style:{fontWeight:"bold",fontSize:"13px",color:"#fff",textShadow:"0 1px 3px #000"}},sp.name),
+          h("span",{style:{fontSize:"12px",color:"rgba(255,255,255,0.8)"}},isMort?"🏦 Hypotheek":hh===0?"Onbebouwd":hh>=5?"🏨 Hotel":`🏠 ${hh} huis${hh>1?"en":""}`)
+        ),
+        div({padding:"8px 10px",background:"#0d1a0d",display:"flex",flexWrap:"wrap",gap:"6px"},
+          sp.type==="property"?btn({padding:"5px 10px",fontSize:"11px",background:bOk?"#2e7d32":"#1a2a1a",color:bOk?"#fff":"#444",border:"none",borderRadius:"6px"},()=>doBuildHouse(sid),!bOk,`🏠 Bouw (€${sp.houseCost})`):null,
+          sp.type==="property"?btn({padding:"5px 10px",fontSize:"11px",background:sOk?"#b71c1c":"#1a0a0a",color:sOk?"#fff":"#444",border:"none",borderRadius:"6px"},()=>doSellHouse(sid),!sOk,`💰 Verkoop huis (€${Math.floor(sp.houseCost/2)})`):null,
+          !isMort?btn({padding:"5px 10px",fontSize:"11px",background:mOk?"#f57c00":"#1a1000",color:mOk?"#fff":"#444",border:"none",borderRadius:"6px"},()=>doMortgage(sid),!mOk,`🏦 Hypotheek (€${sp.mortgage})`):null,
+          isMort?btn({padding:"5px 10px",fontSize:"11px",background:uOk?"#1a6e1a":"#0a0a0a",color:uOk?"#fff":"#444",border:"none",borderRadius:"6px"},()=>doUnmortgage(sid),!uOk,`✅ Aflossen (€${Math.floor(sp.mortgage*1.1)})`):null
+        )
+      );
+    });
+    const tradeBtns=otherActive.length>0?[
+      div({borderTop:"1px solid #1a3a1a",paddingTop:"12px",marginTop:"4px"},
+        div({fontSize:"13px",color:"#FFD700",fontWeight:"bold",marginBottom:"8px"},"🔄 Ruilen met speler"),
+        div({display:"flex",gap:"8px",flexWrap:"wrap"},
+          ...otherActive.map(p=>btn({padding:"8px 14px",fontSize:"12px",background:"#1a3a1a",color:"#fff",border:"1px solid #4a8a4a",borderRadius:"8px"},()=>{S.manageModal=false;S.tradeDraft={targetId:p.id,offerIds:[],requestIds:[],moneyOffer:0,moneyRequest:0};render();},false,`${p.token} Ruil met ${p.name}`))
+        )
+      )
+    ]:[];
+    const panel=div({background:"#0f2a0f",borderRadius:"20px 20px 0 0",padding:"16px 16px 28px",width:"100%",maxWidth:"440px",color:"#fff",maxHeight:"80vh",overflowY:"auto"},
+      div({display:"flex",justifyContent:"space-between",marginBottom:"12px"},
+        h("h3",{style:{color:"#FFD700",margin:0}},"🏗️ Beheer bezittingen"),
+        btn({background:"none",border:"none",color:"#888",fontSize:"20px"},()=>{S.manageModal=false;render();},false,"✕")
+      ),
+      humanProps.length===0?div({color:"#555",fontSize:"13px",textAlign:"center",padding:"20px"},"Nog geen bezittingen."):null,
+      ...items,...tradeBtns
+    );
+    const bd=div({position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:185,display:"flex",alignItems:"flex-end",justifyContent:"center"});
+    panel.addEventListener("click",e=>e.stopPropagation());
+    bd.addEventListener("click",()=>{S.manageModal=false;render();});
+    bd.appendChild(panel);overlays.push(bd);
+  }
+
+  // Trade draft modal
+  if(S.tradeDraft){
+    const td=S.tradeDraft;const target=S.players[td.targetId];
+    const myP=S.players[S.cur]?.properties||[];const theirP=target?.properties||[];
+    const panel=div({background:"#0f2a0f",borderRadius:"20px 20px 0 0",padding:"16px 16px 28px",width:"100%",maxWidth:"440px",color:"#fff",maxHeight:"80vh",overflowY:"auto"},
+      div({display:"flex",justifyContent:"space-between",marginBottom:"12px"},
+        h("h3",{style:{color:"#FFD700",margin:0}},`Ruilen met ${target?.token} ${target?.name}`),
+        btn({background:"none",border:"none",color:"#888",fontSize:"20px"},()=>{S.tradeDraft=null;render();},false,"✕")
+      ),
+      div({fontSize:"11px",color:"#FFD700",marginBottom:"6px"},"Jouw aanbod (selecteer):"),
+      div({display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"12px"},
+        myP.length===0?div({fontSize:"11px",color:"#555"},"Geen bezittingen"):null,
+        ...myP.map(id=>{const sel=td.offerIds.includes(id);return btn({padding:"5px 8px",fontSize:"11px",background:sel?"#2e7d32":"#1a3a1a",color:"#fff",border:`1px solid ${sel?"#4caf50":"#4a8a4a"}`,borderRadius:"6px"},()=>{td.offerIds=sel?td.offerIds.filter(x=>x!==id):[...td.offerIds,id];render();},false,SPACES[id].name);})
+      ),
+      div({display:"flex",gap:"8px",marginBottom:"12px",alignItems:"center"},
+        div({fontSize:"11px",color:"#FFD700"},"+ Geld aanbod: €"),
+        (() => {
+          const inp = h("input",{type:"number",min:"0",value:String(td.moneyOffer),style:{width:"70px",padding:"4px 6px",fontSize:"12px",background:"#1a3a1a",color:"#fff",border:"1px solid #4a8a4a",borderRadius:"6px"}});
+          inp.addEventListener("input",e=>{td.moneyOffer=Math.max(0,Number(e.target.value));});
+          return inp;
+        })()
+      ),
+      div({fontSize:"11px",color:"#ff8a65",marginBottom:"6px"},`Jij wilt van ${target?.name} (selecteer):`),
+      div({display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"12px"},
+        theirP.length===0?div({fontSize:"11px",color:"#555"},"Geen bezittingen"):null,
+        ...theirP.map(id=>{const sel=td.requestIds.includes(id);return btn({padding:"5px 8px",fontSize:"11px",background:sel?"#b71c1c":"#1a3a1a",color:"#fff",border:`1px solid ${sel?"#ef5350":"#4a8a4a"}`,borderRadius:"6px"},()=>{td.requestIds=sel?td.requestIds.filter(x=>x!==id):[...td.requestIds,id];render();},false,SPACES[id].name);})
+      ),
+      div({display:"flex",gap:"8px",marginBottom:"14px",alignItems:"center"},
+        div({fontSize:"11px",color:"#ff8a65"},"+ Geld verzoek: €"),
+        (() => {
+          const inp = h("input",{type:"number",min:"0",value:String(td.moneyRequest),style:{width:"70px",padding:"4px 6px",fontSize:"12px",background:"#1a3a1a",color:"#fff",border:"1px solid #4a8a4a",borderRadius:"6px"}});
+          inp.addEventListener("input",e=>{td.moneyRequest=Math.max(0,Number(e.target.value));});
+          return inp;
+        })()
+      ),
+      btn({width:"100%",padding:"12px 0",background:"#1a6e1a",color:"#fff",border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:"bold"},submitTrade,false,"📤 Ruilvoorstel versturen")
+    );
+    const bd=div({position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:185,display:"flex",alignItems:"flex-end",justifyContent:"center"});
+    panel.addEventListener("click",e=>e.stopPropagation());bd.appendChild(panel);overlays.push(bd);
+  }
+
+  // Trade confirmation modal
+  if(S.tradeModal){
+    const tm=S.tradeModal;
+    overlays.push(div({position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:190,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"},
+      div({background:"#0f2a0f",border:"2px solid #4a8a4a",borderRadius:"16px",padding:"20px",width:"100%",maxWidth:"340px",color:"#fff"},
+        h("h3",{style:{color:"#FFD700",margin:"0 0 12px",textAlign:"center"}},"Ruilvoorstel"),
+        div({fontSize:"12px",color:"#ccc",marginBottom:"8px"},
+          h("b",{style:{color:PCOLORS[tm.fromId]}},S.players[tm.fromId]?.name)," biedt aan:",
+          div({color:"#4caf50",marginTop:"4px"},...tm.offerIds.map(id=>div({},"• "+SPACES[id].name)),tm.moneyOffer>0?div({},"• €"+tm.moneyOffer+" geld"):null)
+        ),
+        div({fontSize:"12px",color:"#ccc",marginBottom:"14px"},
+          "In ruil voor van ",h("b",{style:{color:PCOLORS[tm.targetId]}},S.players[tm.targetId]?.name),":",
+          div({color:"#ff8a65",marginTop:"4px"},...tm.requestIds.map(id=>div({},"• "+SPACES[id].name)),tm.moneyRequest>0?div({},"• €"+tm.moneyRequest+" geld"):null)
+        ),
+        div({display:"flex",gap:"8px"},
+          btn({flex:1,padding:"11px 0",background:"#2e7d32",color:"#fff",border:"none",borderRadius:"8px",fontWeight:"bold",fontSize:"14px"},()=>{executeTrade(tm.offerIds,tm.requestIds,tm.moneyOffer,tm.moneyRequest,tm.fromId,tm.targetId);addLog("Ruil geaccepteerd! ✅","#4caf50");S.tradeModal=null;render();},false,"✅ Accepteren"),
+          btn({flex:1,padding:"11px 0",background:"#424242",color:"#fff",border:"none",borderRadius:"8px",fontSize:"14px"},()=>{addLog("Ruil geweigerd.","#888");S.tradeModal=null;render();},false,"❌ Weigeren")
+        )
+      )
+    ));
+  }
+
+  // Save panel
+  if(S.showSavePanel){
+    const panel=div({background:"#0f2a0f",border:"2px solid #4a8a4a",borderRadius:"16px",padding:"24px 20px",width:"100%",maxWidth:"320px",color:"#fff"},
+      h("h2",{style:{color:"#FFD700",margin:"0 0 16px",fontSize:"18px",textAlign:"center"}},"💾 Opslaan / Laden"),
+      S.saveMsg?div({background:"rgba(0,0,0,0.5)",color:S.saveMsg.color,border:`1px solid ${S.saveMsg.color}`,borderRadius:"8px",padding:"7px 10px",marginBottom:"12px",fontSize:"12px",textAlign:"center"},S.saveMsg.msg):null,
+      ...[0,1,2].map(i=>div({display:"flex",alignItems:"center",gap:"8px",marginBottom:"10px",background:"rgba(255,255,255,0.04)",borderRadius:"10px",padding:"10px 12px",border:"1px solid #2a4a2a"},
+        div({flex:1},
+          div({fontSize:"12px",color:"#FFD700",fontWeight:"bold"},`Slot ${i+1}`),
+          S.savedSlots[i]?div({fontSize:"10px",color:"#aaa",lineHeight:1.5},S.savedSlots[i].date," — ",S.savedSlots[i].names):div({fontSize:"10px",color:"#555",fontStyle:"italic"},"Leeg")
+        ),
+        btn({padding:"7px 10px",fontSize:"11px",background:"#2e7d32",color:"#fff",border:"none",borderRadius:"7px",fontWeight:"bold"},()=>saveGame(i),false,"💾"),
+        btn({padding:"7px 10px",fontSize:"11px",background:S.savedSlots[i]?"#1a6e1a":"#222",color:S.savedSlots[i]?"#fff":"#555",border:"none",borderRadius:"7px"},()=>loadGame(i),!S.savedSlots[i],"📂")
+      )),
+      btn({width:"100%",padding:"10px",background:"#1a3a1a",color:"#aaa",border:"none",borderRadius:"8px",fontSize:"13px",marginTop:"4px"},()=>{S.showSavePanel=false;render();},false,"Sluiten")
+    );
+    const bd=div({position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:150,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"});
+    panel.addEventListener("click",e=>e.stopPropagation());
+    bd.addEventListener("click",()=>{S.showSavePanel=false;render();});
+    bd.appendChild(panel);overlays.push(bd);
+  }
+
+  const wrap=div({display:"flex",flexDirection:"column",height:"100vh",background:"#0d1f0d",overflow:"hidden"},
+    topBar,boardWrap,bottomBar,...overlays
+  );
+  return wrap;
+}
+
+// ─── BOOT ────────────────────────────────────────────────────────────────────
+loadSavedSlotMeta();
+render();
+</script>
+</body>
+</html>
