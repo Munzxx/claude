@@ -844,10 +844,13 @@ function placePawn(pid,sid){
 function scrollToPos(sid,instant){
   const sc=DOM.boardScroll;if(!sc)return;
   const{x,y}=spaceCenter(sid);
-  // Add 8px padding offset that boardScroll has
-  const tx=Math.max(0,x-sc.clientWidth/2+8);
-  const ty=Math.max(0,y-sc.clientHeight/2+8);
-  sc.scrollTo({left:tx,top:ty,behavior:instant?"auto":"smooth"});
+  // Use sc.clientWidth/Height but fall back to window dimensions if 0
+  const vw=sc.clientWidth||window.innerWidth||375;
+  const vh=sc.clientHeight||(window.innerHeight-160)||500;
+  const tx=Math.max(0,x-vw/2);
+  const ty=Math.max(0,y-vh/2);
+  sc.scrollLeft=tx;  // Direct property assignment — most reliable on iOS Safari
+  sc.scrollTop=ty;   // Avoids scrollTo() quirks with behavior:auto on iOS
 }
 
 // ─── TURN FLOW ────────────────────────────────────────────────────────────────
