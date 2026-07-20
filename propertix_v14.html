@@ -817,22 +817,18 @@ function setDieFace(el,val){
 
 // Pawn: moves the CSS-transitioned pawn element step by step
 function animatePawn(pid,from,steps,onDone){
-  // Pion beweegt via CSS transform transition — geen scroll tussendoor
-  // want dat vecht met de GPU animatie en geeft ghosting/trails.
-  // Scroll alleen aan het einde zodat eindpositie in beeld is.
+  // Pion beweegt via CSS transform (GPU, geen ghosting).
+  // Camera scrollt INSTANT elke stap mee — smooth scroll vecht met
+  // de CSS transition en geeft ghosting. Instant = geen conflict.
   let step=0;
   function next(){
     step++;
     const pos=(from+step)%40;
     G.pawnPos[pid]=pos;
-    placePawn(pid,pos);  // CSS transform update — browser animeert soepel
-    if(step<steps){
-      setTimeout(next,220);
-    } else {
-      // Laatste stap: scroll naar eindpositie, dan callback
-      scrollToPos(pos, false); // smooth scroll naar eindpositie
-      setTimeout(onDone,250);
-    }
+    placePawn(pid,pos);        // GPU transform — pion schuift soepel
+    scrollToPos(pos, true);    // instant scroll — camera volgt elke stap
+    if(step<steps) setTimeout(next,220);
+    else setTimeout(onDone,250);
   }
   next();
 }
