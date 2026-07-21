@@ -516,6 +516,10 @@ function loadAutoSave(){
     DOM.app.innerHTML="";DOM.app.style.cssText="height:100%;display:flex;flex-direction:column;";
     showToast("✅ Autosave geladen!","#4caf50");
     buildGameScreen();
+    // Vangnet: als de huidige speler een CPU is, start automatisch diens beurt
+    if(G.players[G.cur]&&!G.players[G.cur].isHuman&&G.phase==="roll"){
+      setTimeout(()=>runCPU(G.cur),700);
+    }
   }catch(e){showToast("❌ Autosave laden mislukt.","#f44");}
 }
 
@@ -588,6 +592,10 @@ function loadGame(slot){
     DOM.app.style.cssText="height:100%;display:flex;flex-direction:column;";
     showToast("✅ Spel geladen!","#4caf50");
     buildGameScreen();
+    // Vangnet: als de huidige speler een CPU is, start automatisch diens beurt
+    if(G.players[G.cur]&&!G.players[G.cur].isHuman&&G.phase==="roll"){
+      setTimeout(()=>runCPU(G.cur),700);
+    }
   }catch{showToast("❌ Laden mislukt.","#f44");}
 }
 
@@ -1000,10 +1008,18 @@ function submitTrade(){
 
 function autoSave(){
   try{
+    // Bewaar de VOLGENDE speler (na deze beurt) i.p.v. de huidige,
+    // zodat een geladen autosave altijd netjes bij "roll" van de juiste speler begint.
+    const active=G.players.filter(p=>!p.bankrupt);
+    let nextCur=G.cur;
+    if(active.length>1){
+      nextCur=(G.cur+1)%G.players.length;
+      while(G.players[nextCur]?.bankrupt) nextCur=(nextCur+1)%G.players.length;
+    }
     const d={
       date:new Date().toLocaleString("nl-NL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}),
       players:G.players,owned:G.owned,houses:G.houses,mortgaged:G.mortgaged,
-      cur:G.cur,phase:G.phase,log:G.log.slice(-20),pawnPos:{...G.pawnPos},freePot:G.freePot,
+      cur:nextCur,phase:"roll",log:G.log.slice(-20),pawnPos:{...G.pawnPos},freePot:G.freePot,
       chanceIdx:G.chanceIdx,chestIdx:G.chestIdx,
     };
     localStorage.setItem("prx_auto",JSON.stringify(d));
@@ -1011,7 +1027,10 @@ function autoSave(){
 }
 
 function handleEndTurn(){
-  autoSave(); // automatisch opslaan na elke beurt
+  // Autosave alleen als de HUIDIGE speler (die net zijn beurt beëindigt) menselijk is.
+  // Zo niet gebeurt autosave nooit midden in een CPU-keten, wat een inconsistente
+  // snapshot zou geven (G.cur op een CPU zonder dat er iets is dat hem laat spelen).
+  if(G.players[G.cur]?.isHuman) autoSave();
   const active=G.players.filter(p=>!p.bankrupt);if(active.length<=1)return;
   let next=(G.cur+1)%G.players.length;while(G.players[next]?.bankrupt)next=(next+1)%G.players.length;
   G.cur=next;G.phase="roll";refreshUI();
