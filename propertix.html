@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v14.0">
+<meta name="apple-mobile-web-app-title" content="Propertix v14.1">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v14.0</title>
+<title>Propertix v14.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -154,7 +154,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v14.0";
+const APP_VERSION="v14.1";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -199,6 +199,9 @@ const MP = {
   myPid: 0,           // which player index am I?
   roomCode: null,     // 4-digit room code
   status: "",         // status message for UI
+  roster: [],         // [{name,isHuman}] — enige bron van waarheid voor spelersnamen in de lobby,
+                       // gesynchroniseerd via echte berichten (client_hello / roster_update),
+                       // losstaand van G.playerSetup (dat is voor lokaal pass-and-play)
 };
 
 // ── MULTIPLAYER HELPERS ───────────────────────────────────────────────────────
@@ -250,6 +253,15 @@ function mpApplySync(state) {
 function mpHandleMessage(data, fromConn) {
   if (!data || !data.type) return;
   if (MP.isHost) {
+    // Host verwerkt handshake van een nieuwe client
+    if (data.type === "client_hello") {
+      const pid = MP.connections.indexOf(fromConn) + 1; // 1-based
+      MP.roster[pid] = { name: data.name || `Speler ${pid+1}`, isHuman: true };
+      // Stuur de VOLLEDIGE roster naar iedereen zodat alle lobbies synchroon lopen
+      mpBroadcastRoster();
+      renderMPLobby();
+      return;
+    }
     // Host receives actions from clients
     if (data.type === "action") {
       const { action, payload } = data;
@@ -283,6 +295,17 @@ function mpHandleMessage(data, fromConn) {
   } else {
     // Client receives from host
     if (data.type === "sync") mpApplySync(data.state);
+    else if (data.type === "roster_update") {
+      // Host stuurt de volledige, actuele deelnemerslijst — dit is de
+      // enige bron van waarheid, overschrijft lokale placeholder-namen
+      MP.roster = data.roster || [];
+      renderMPLobby();
+    }
+    else if (data.type === "your_pid") {
+      // Host vertelt ons welk spelernummer we hebben gekregen
+      MP.myPid = data.pid;
+      renderMPLobby();
+    }
     else if (data.type === "trade_request") {
       // Host is asking client to confirm a trade
       G.tradeRequest = data;
@@ -296,6 +319,7 @@ function mpHandleMessage(data, fromConn) {
       showToast(`${data.name} heeft de lobby betreden!`, "#4caf50");
     }
     else if (data.type === "game_start") {
+      MP.myPid = data.pid; // definitief spelernummer bij start
       mpApplySync(data.state);
       buildGameScreen();
     }
@@ -305,6 +329,12 @@ function mpHandleMessage(data, fromConn) {
       showMenu();
     }
   }
+}
+
+// Host: broadcast de volledige roster naar alle verbonden clients
+function mpBroadcastRoster() {
+  if (!MP.isHost) return;
+  MP.connections.forEach(c => { try { c.send({ type:"roster_update", roster: MP.roster }); } catch(e){} });
 }
 
 // Client sends an action to host
@@ -336,6 +366,7 @@ function mpCreateRoom(playerName) {
   MP.isHost = true;
   MP.myPid = 0;
   MP.status = "Lobby aanmaken...";
+  MP.roster = [{ name: playerName || "Host", isHuman: true }]; // host is altijd pid 0
   renderMPLobby();
 
   MP.peer = new Peer("propertix-" + code, {
@@ -345,25 +376,27 @@ function mpCreateRoom(playerName) {
 
   MP.peer.on("open", () => {
     MP.status = "Lobby actief";
-    // Update host player name
-    if (G.playerSetup) G.playerSetup[0].name = playerName;
     renderMPLobby();
   });
 
   MP.peer.on("connection", (conn) => {
     conn.on("open", () => {
       MP.connections.push(conn);
-      const pid = MP.connections.length; // 1-based for clients
+      const pid = MP.connections.length; // 1-based voor clients
       conn.metadata = { pid };
-      showToast(`Speler ${pid+1} heeft verbinding gemaakt!`, "#4caf50");
-      // Tell everyone who joined
-      const joinedName = G.playerSetup[pid]?.name || `Speler ${pid+1}`;
-      MP.connections.forEach(c => c.send({ type:"player_joined", name:joinedName }));
+      // Naam komt pas binnen via het "client_hello" bericht (zie mpHandleMessage) —
+      // tot die tijd een tijdelijke placeholder in de roster zodat de lijst klopt qua aantal
+      if (!MP.roster[pid]) MP.roster[pid] = { name: `Speler ${pid+1}`, isHuman: true };
+      // Vertel de nieuwe client meteen zijn eigen spelernummer
+      conn.send({ type: "your_pid", pid });
       renderMPLobby();
     });
     conn.on("data", (data) => mpHandleMessage(data, conn));
     conn.on("close", () => {
+      const idx = MP.connections.indexOf(conn);
       MP.connections = MP.connections.filter(c => c !== conn);
+      if (idx >= 0) MP.roster.splice(idx+1, 1); // verwijder uit roster
+      mpBroadcastRoster();
       renderMPLobby();
     });
   });
@@ -417,18 +450,15 @@ function mpJoinRoom(code, playerName) {
 function mpStartGame() {
   if (!MP.isHost) return;
   const numPlayers = 1 + MP.connections.length;
-  // Build playerSetup: host is human pid=0, each client is human pid=1..n
+  // Build playerSetup direct vanuit MP.roster — de enige correcte bron van namen,
+  // want die is gesynchroniseerd via echte client_hello handshakes
   G.playerSetup = Array.from({length: numPlayers}, (_,i) => ({
-    name: i === 0 ? (G.playerSetup[0]?.name || "Host") : (G.playerSetup[i]?.name || `Speler ${i+1}`),
+    name: MP.roster[i]?.name || (i===0 ? "Host" : `Speler ${i+1}`),
     isHuman: true,
   }));
   MP.active = true;
-  // Tell each client their player index
-  MP.connections.forEach((conn, i) => {
-    conn.send({ type: "your_pid", pid: i+1 });
-  });
   startGame();
-  // After startGame builds state, sync to all clients
+  // After startGame builds state, sync to all clients (pid staat al vast sinds connectie)
   setTimeout(() => {
     MP.connections.forEach((conn, i) => {
       conn.send({ type: "game_start", pid: i+1, state: {
@@ -1266,8 +1296,13 @@ function refreshCenter(){
 function refreshBottomBar(){
   const bb=DOM.bottomBar;bb.innerHTML="";
   const curP=G.players[G.cur];const curSp=curP?SPACES[curP.pos]:null;
+  // In online multiplayer: alleen actieknoppen tonen als G.cur ECHT "mijn" speler is —
+  // dit geldt zowel voor de host als voor clients. Zonder deze check ziet de host
+  // altijd de knoppen (want curP.isHuman is true voor alle MP-spelers), en moest
+  // de host dus zelf de beurten van andere spelers besturen.
+  const isMyTurnMP = !MP.active || G.cur === MP.myPid;
   // Space label
-  if(curSp&&curP?.isHuman){
+  if(curSp&&curP?.isHuman&&isMyTurnMP){
     const lbl=document.createElement("div");
     lbl.style.cssText="text-align:center;font-size:12px;color:#ccc;margin-bottom:6px;font-family:Georgia,serif;";
     lbl.innerHTML=`<b style="color:${curP.color}">${curP.name}</b> staat op: <b style="color:#FFD700">${curSp.name}</b>${curSp.price>0?` — €${curSp.price}`:""}${curP.inJail?'<span style="color:#ff8800"> 🔒</span>':""}`;
@@ -1276,12 +1311,12 @@ function refreshBottomBar(){
   // Action buttons row
   const row=document.createElement("div");
   row.style.cssText="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;";
-  if(G.phase==="roll"&&curP?.isHuman){
+  if(G.phase==="roll"&&curP?.isHuman&&isMyTurnMP){
     const rollFn = MP.active && !MP.isHost ? ()=>mpAction("roll") : handleRoll;
     const rb=mkBtn(G.busy?"🎲 Gooien...":curP.inJail?"🎲 Gooi dubbel (gratis)":"🎲 Dobbelstenen gooien","flex:1 1 auto;max-width:220px;padding:14px 0;font-size:16px;font-weight:bold;background:"+(G.busy?"#555":"#FFD700")+";color:"+(G.busy?"#999":"#000")+";border:none;border-radius:10px;",rollFn,G.busy);
     row.appendChild(rb);
     if(curP.inJail&&!G.busy){const bb2=mkBtn("🔓 Vrijkopen (€50)","flex:1 1 auto;max-width:170px;padding:14px 0;font-size:13px;font-weight:bold;background:"+(curP.money>=50?"#b71c1c":"#333")+";color:"+(curP.money>=50?"#fff":"#666")+";border:none;border-radius:10px;",handleBailOut,curP.money<50);row.appendChild(bb2);}
-  } else if(G.phase==="rescue"&&curP?.isHuman){
+  } else if(G.phase==="rescue"&&curP?.isHuman&&isMyTurnMP){
     const debtEl=document.createElement("div");
     debtEl.style.cssText="text-align:center;font-size:13px;color:#ff4444;margin-bottom:6px;font-weight:bold;font-family:Georgia,serif;";
     debtEl.textContent=`⚠️ ${curP.name} heeft €${Math.abs(curP.money)} te weinig! Verkoop bezittingen om te betalen.`;
@@ -1290,18 +1325,19 @@ function refreshBottomBar(){
     btnRow.appendChild(mkBtn("🏗️ Verkopen/Verhypotheken","flex:1 1 auto;max-width:240px;padding:13px 0;font-size:14px;font-weight:bold;background:#b71c1c;color:#fff;border:none;border-radius:10px;",()=>renderOverlays({rescue:true})));
     btnRow.appendChild(mkBtn("💀 Opgeven (failliet)","flex:1 1 auto;max-width:160px;padding:13px 0;font-size:13px;background:#333;color:#aaa;border:none;border-radius:10px;",()=>declareBankrupt(G.cur)));
     bb.appendChild(btnRow);
-  } else if(G.phase==="buy"&&curP?.isHuman&&curSp){
+  } else if(G.phase==="buy"&&curP?.isHuman&&curSp&&isMyTurnMP){
     const buyFn  = MP.active && !MP.isHost ? ()=>mpAction("buy")  : handleBuy;
     const skipFn = MP.active && !MP.isHost ? ()=>mpAction("skip") : handleSkip;
     row.appendChild(mkBtn(`✅ Kopen (€${curSp.price})`,"flex:1 1 auto;padding:13px 0;font-size:15px;font-weight:bold;background:#2e7d32;color:#fff;border:none;border-radius:10px;",buyFn));
     row.appendChild(mkBtn("❌ Niet kopen","flex:1 1 auto;padding:13px 0;font-size:15px;background:#424242;color:#fff;border:none;border-radius:10px;",skipFn));
-  } else if(G.phase==="endturn"&&curP?.isHuman){
+  } else if(G.phase==="endturn"&&curP?.isHuman&&isMyTurnMP){
     const endFn = MP.active && !MP.isHost ? ()=>mpAction("endturn") : handleEndTurn;
     row.appendChild(mkBtn("🏗️ Beheren/Ruilen","flex:1 1 auto;max-width:160px;padding:13px 0;font-size:13px;font-weight:bold;background:#1a3a1a;color:#FFD700;border:1px solid #FFD700;border-radius:10px;",()=>renderOverlays({manage:true})));
     row.appendChild(mkBtn("➡️ Beurt beëindigen","flex:1 1 auto;max-width:200px;padding:13px 0;font-size:15px;font-weight:bold;background:#1a6e1a;color:#fff;border:none;border-radius:10px;",endFn));
   } else if(!curP?.isHuman){
     const w=document.createElement("div");w.style.cssText="color:#666;font-size:13px;padding:13px 0;text-align:center;width:100%;font-family:Georgia,serif;";w.textContent=`${curP?.name} speelt... ⏳`;row.appendChild(w);
-  } else if(MP.active && !MP.isHost && G.cur !== MP.myPid){
+  } else if(MP.active && !isMyTurnMP){
+    // Geldt nu voor ZOWEL host als client: als het niet jouw beurt is, wachtscherm tonen
     const w=document.createElement("div");w.style.cssText="color:#666;font-size:13px;padding:13px 0;text-align:center;width:100%;font-family:Georgia,serif;";
     w.textContent=`${curP?.name} is aan de beurt... ⏳`;row.appendChild(w);
   }
@@ -1523,8 +1559,8 @@ function renderMPLobby() {
     </div>` : `<div style="font-size:13px;color:#ccc;margin-bottom:14px">Code: <b style="color:#FFD700;letter-spacing:3px">${MP.roomCode}</b></div>`}
     <div style="text-align:left;margin-bottom:14px">
       <div style="font-size:11px;color:#888;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">Spelers in lobby</div>
-      ${[0,...MP.connections.map((_,i)=>i+1)].map(pid => {
-        const name = G.playerSetup?.[pid]?.name || (pid===0?"Host":`Speler ${pid+1}`);
+      ${MP.roster.map((entry,pid) => {
+        const name = entry?.name || (pid===0?"Host":`Speler ${pid+1}`);
         const isMe = pid === MP.myPid;
         return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(255,255,255,0.04);border-radius:8px;margin-bottom:5px;border:1px solid ${isMe?"#FFD700":"#2a4a2a"}">
           <span style="font-size:16px">${TOKENS[pid]}</span>
@@ -1580,9 +1616,7 @@ function showMPSetup() {
 
   // Create room button
   box.appendChild(mkBtn("🏠 Kamer aanmaken (Host)","width:100%;padding:12px 0;font-size:15px;font-weight:bold;background:#FFD700;color:#000;border:none;border-radius:10px;margin-bottom:10px;",()=>{
-    if(!G.playerSetup)G.playerSetup=[{name:"Host",isHuman:true}];
-    G.playerSetup[0]={name:nameInp.value||"Host",isHuman:true};
-    mpCreateRoom(nameInp.value||"Host");
+    mpCreateRoom(nameInp.value||"Host"); // mpCreateRoom zet MP.roster[0] zelf correct
   }));
 
   // Divider
@@ -1598,7 +1632,7 @@ function showMPSetup() {
   codeRow.appendChild(mkBtn("Verbinden","padding:9px 16px;font-size:14px;font-weight:bold;background:#1a6e1a;color:#fff;border:none;border-radius:8px;",()=>{
     const code=codeInp.value.trim();
     if(code.length!==4){showToast("Voer een 4-cijferige code in","#f44");return;}
-    MP.myPid = MP.connections.length + 1; // will be set properly by host
+    // MP.myPid wordt straks door de host gezet via het "your_pid" bericht
     mpJoinRoom(code, nameInp.value||"Speler");
   }));
   box.appendChild(codeRow);
