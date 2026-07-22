@@ -183,6 +183,7 @@ let G={
   chanceCards:shuffle(CHANCE),chestCards:shuffle(CHEST),chanceIdx:0,chestIdx:0,
   savedSlots:[null,null,null],
   autoSaveSlot:null,
+  _needsSecondLanding:false, // interne vlag: heeft kaart-verplaatsing nog een landing-check nodig?
   // animation lock — pawn can only move when this is false
   busy:false,
 };
@@ -603,12 +604,16 @@ function loadGame(slot){
 function addLog(msg,color="#bbb"){G.log=[...G.log.slice(-80),{msg,color}];}
 
 function applyCard(pc,pid,result,oc){
+  // Retourneert of nieuwe positie nog een landing-check nodig heeft
+  // (moveBack/moveToNearest hebben zelf geen geldafhandeling)
+  let needsLandingCheck=false;
   if(result.money)pc[pid]={...pc[pid],money:pc[pid].money+result.money};
   if(result.moveTo!=null)pc[pid]={...pc[pid],pos:result.moveTo};
-  if(result.moveBack)pc[pid]={...pc[pid],pos:((pc[pid].pos-result.moveBack)+40)%40};
+  if(result.moveBack){pc[pid]={...pc[pid],pos:((pc[pid].pos-result.moveBack)+40)%40};needsLandingCheck=true;}
   if(result.goToJail)pc[pid]={...pc[pid],pos:10,inJail:true,jailTurns:0};
   if(result.collectFromAll)pc.forEach((_,i)=>{if(i!==pid&&!pc[i].bankrupt){pc[i]={...pc[i],money:pc[i].money-result.collectFromAll};pc[pid]={...pc[pid],money:pc[pid].money+result.collectFromAll};}});
-  if(result.moveToNearest){const rr=[5,15,25,35];pc[pid]={...pc[pid],pos:rr.find(r=>r>pc[pid].pos)||rr[0]};}
+  if(result.moveToNearest){const rr=[5,15,25,35];pc[pid]={...pc[pid],pos:rr.find(r=>r>pc[pid].pos)||rr[0]};needsLandingCheck=true;}
+  return needsLandingCheck;
 }
 
 function processLanding(pc,oc,pid,pos,diceTotal){
@@ -620,8 +625,8 @@ function processLanding(pc,oc,pid,pos,diceTotal){
   }
   else if(sp.type==="gotojail"){pc[pid]={...pl,pos:10,inJail:true,jailTurns:0};showToast("🚔 Naar de gevangenis!","#ff4444");}
   else if(sp.type==="tax"){const t=sp.rent[0];pc[pid]={...pl,money:pl.money-t};G.freePot+=t;showToast(`💸 Belasting -€${t} → pot`,"#ff8800");}
-  else if(sp.type==="chest"){const c=G.chestCards[G.chestIdx%G.chestCards.length];G.chestIdx++;showToast(`🎁 ${c.t}`,"#9b59b6");applyCard(pc,pid,c.a(),oc);}
-  else if(sp.type==="chance"){const c=G.chanceCards[G.chanceIdx%G.chanceCards.length];G.chanceIdx++;showToast(`❓ ${c.t}`,"#e67e22");applyCard(pc,pid,c.a(),oc);}
+  else if(sp.type==="chest"){const c=G.chestCards[G.chestIdx%G.chestCards.length];G.chestIdx++;showToast(`🎁 ${c.t}`,"#9b59b6");if(applyCard(pc,pid,c.a(),oc))G._needsSecondLanding=true;}
+  else if(sp.type==="chance"){const c=G.chanceCards[G.chanceIdx%G.chanceCards.length];G.chanceIdx++;showToast(`❓ ${c.t}`,"#e67e22");if(applyCard(pc,pid,c.a(),oc))G._needsSecondLanding=true;}
   else if(sp.type==="utility"){
     const oid=oc[sp.id];
     if(oid==null){ph=pl.isHuman?"buy":"endturn";if(!pl.isHuman)cpuBuy(pc,oc,pid,sp);}
@@ -912,13 +917,15 @@ function executeMove(pid,d1,d2,cb){
     placePawn(pid,to);
 
     // Process landing — card effects may change pc[pid].pos
-    const np=processLanding(pc,oc,pid,to,total);
+    G._needsSecondLanding=false;
+    let np=processLanding(pc,oc,pid,to,total);
     checkBankrupt(pc,oc);
     // Set G.players and G.owned BEFORE finishMove so isInDebt/canPlayerRaiseMoney
     // read the correct updated state
     G.players=pc;G.owned=oc;
 
     const finalPos=pc[pid].pos;
+    const needsSecondLanding=G._needsSecondLanding;
 
     function finishMove(){
       // Re-read from G.players (already updated above)
@@ -938,10 +945,17 @@ function executeMove(pid,d1,d2,cb){
             G.pawnPos[pid]=finalPos;
             placePawn(pid,finalPos);
             scrollToPos(finalPos);
+            // moveBack/moveToNearest: het nieuwe vakje moet alsnog normaal
+            // verwerkt worden (kopen/huur betalen), want dat is nog niet gebeurd
+            if(needsSecondLanding){
+              np=processLanding(pc,oc,pid,finalPos,total);
+              checkBankrupt(pc,oc);
+              G.players=pc;G.owned=oc;
+            }
             finishMove();
           });
         } else {
-          // Teleport (goToJail = pos 10, or moveTo=0)
+          // Teleport (goToJail = pos 10, of moveTo=0 naar START)
           G.pawnPos[pid]=finalPos;
           placePawn(pid,finalPos);
           scrollToPos(finalPos);
