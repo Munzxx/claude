@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v14.1">
+<meta name="apple-mobile-web-app-title" content="Propertix v14.2">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v14.1</title>
+<title>Propertix v14.2</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -154,7 +154,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v14.1";
+const APP_VERSION="v14.2";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -185,6 +185,8 @@ let G={
   savedSlots:[null,null,null],
   autoSaveSlot:null,
   _needsSecondLanding:false, // interne vlag: heeft kaart-verplaatsing nog een landing-check nodig?
+  _activeOverlay:null, // welk scherm nu open is ("manage"/"rescue"/null) — zodat een
+                        // binnenkomende MP-sync dat scherm live kan verversen
   // animation lock — pawn can only move when this is false
   busy:false,
 };
@@ -202,6 +204,8 @@ const MP = {
   roster: [],         // [{name,isHuman}] — enige bron van waarheid voor spelersnamen in de lobby,
                        // gesynchroniseerd via echte berichten (client_hello / roster_update),
                        // losstaand van G.playerSetup (dat is voor lokaal pass-and-play)
+  animatingPid: null,  // client: pid waarvan de dobbel/loop-animatie nu lokaal wordt nagespeeld
+  pendingSync: null,   // client: binnengekomen sync die wacht tot de animatie klaar is
 };
 
 // ── MULTIPLAYER HELPERS ───────────────────────────────────────────────────────
@@ -231,6 +235,17 @@ function mpSyncState() {
 }
 
 function mpApplySync(state) {
+  // Als er nu een lokale spiegel-animatie loopt (dobbelstenen/pion van de andere
+  // speler), bufferen we deze sync — anders "springt" het bord midden in de
+  // animatie naar de eindstatus. Zodra de animatie klaar is, passen we hem alsnog toe.
+  if (MP.animatingPid != null) {
+    MP.pendingSync = state;
+    return;
+  }
+  mpApplySyncNow(state);
+}
+
+function mpApplySyncNow(state) {
   // Client applies state received from host
   G.players = state.players;
   G.owned = {}; Object.entries(state.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
@@ -248,6 +263,9 @@ function mpApplySync(state) {
   });
   scrollToPos(G.pawnPos[G.cur] ?? 0);
   refreshUI();
+  // Als er een geopend beheer/rescue-scherm is, ververs die met de nieuwe status
+  if (G._activeOverlay === "manage") renderManageModal();
+  else if (G._activeOverlay === "rescue") renderRescueModal();
 }
 
 function mpHandleMessage(data, fromConn) {
@@ -284,17 +302,32 @@ function mpHandleMessage(data, fromConn) {
       else if (action === "trade_confirm" && payload) {
         execTrade(payload.offerIds,payload.reqIds,payload.mo,payload.mr,payload.fromId,payload.toId);
         addLog("Ruil geaccepteerd! ✅","#4caf50");
-        refreshUI(); mpSyncState();
+        refreshUI(); // syncen gebeurt al automatisch binnen refreshUI() voor de host
       }
       else if (action === "trade_reject") {
         addLog("Ruil geweigerd.","#888");
-        refreshUI(); mpSyncState();
+        refreshUI();
       }
       else if (action === "bankrupt_self") declareBankrupt(senderPid);
     }
   } else {
     // Client receives from host
     if (data.type === "sync") mpApplySync(data.state);
+    else if (data.type === "turn_animate") {
+      // Host stuurt dit VOORDAT hij zelf begint te animeren — wij spelen
+      // exact dezelfde dobbelsteen- en loopanimatie lokaal na, zodat beide
+      // spelers hetzelfde zien gebeuren, in plaats van alleen het eindresultaat.
+      const { pid, d1, d2 } = data;
+      const fromPos = G.players[pid]?.pos ?? 0;
+      MP.animatingPid = pid;
+      animateDice(d1, d2, () => {
+        animatePawn(pid, fromPos, d1+d2, () => {
+          MP.animatingPid = null;
+          // Als er ondertussen een sync is binnengekomen, verwerk die nu alsnog
+          if (MP.pendingSync) { const s = MP.pendingSync; MP.pendingSync = null; mpApplySyncNow(s); }
+        });
+      });
+    }
     else if (data.type === "roster_update") {
       // Host stuurt de volledige, actuele deelnemerslijst — dit is de
       // enige bron van waarheid, overschrijft lokale placeholder-namen
@@ -344,6 +377,19 @@ function mpAction(action, payload) {
     // Host acts directly — no round-trip needed
   } else {
     mpSend({ type: "action", action, payload });
+  }
+}
+
+// Universele router voor alle acties die de spelstatus muteren (huizen bouwen/
+// verkopen, hypotheek, vrijkopen, etc). Client: stuurt de actie naar de host en
+// voert NIETS lokaal uit (voorkomt dat lokale wijzigingen straks door de
+// volgende sync worden overschreven — dat was de kern van het "elkaars speler
+// besturen"-probleem). Host of offline spel: voert gewoon direct lokaal uit.
+function mpDo(action, payload, localFn) {
+  if (MP.active && !MP.isHost) {
+    mpAction(action, payload);
+  } else {
+    localFn();
   }
 }
 
@@ -1003,6 +1049,12 @@ function handleRoll(){
   if(G.phase!=="roll"||G.busy)return;
   G.busy=true;
   const d1=rng(),d2=rng();
+  // In multiplayer: stuur de dobbelwaarden EERST naar alle clients, zodat zij
+  // exact dezelfde animatie tegelijk met de host kunnen afspelen — hierdoor ziet
+  // iedereen wat er gedobbeld wordt en hoe het pion loopt, niet alleen het eindresultaat.
+  if (MP.active && MP.isHost) {
+    mpSend({ type:"turn_animate", pid:G.cur, d1, d2 });
+  }
   // First animate dice, only AFTER they stop → move pawn
   animateDice(d1,d2,()=>{
     executeMove(G.cur,d1,d2,np=>{
@@ -1031,9 +1083,19 @@ function canBuildHouse(sid){const sp=SPACES[sid];if(sp.type!=="property"||G.owne
 function canSellHouse(sid){const sp=SPACES[sid];if(sp.type!=="property"||G.owned[sid]!==G.cur)return false;const h=G.houses[sid]||0;if(h===0)return false;const max=Math.max(...(CGROUPS[sp.color]||[]).map(id=>G.houses[id]||0));return h===max;}
 function canMortgage(sid){if(G.owned[sid]!==G.cur||G.mortgaged[sid])return false;if(SPACES[sid].type==="property"){const grp=CGROUPS[SPACES[sid].color]||[];if(grp.some(id=>G.houses[id]>0))return false;}return true;}
 function canUnmortgage(sid){return G.owned[sid]===G.cur&&G.mortgaged[sid]&&G.players[G.cur].money>=Math.floor(SPACES[sid].mortgage*1.1);}
+function checkRescueResolved(){
+  // Host-autoritatieve check: als de speler in "rescue"-fase weer genoeg geld
+  // heeft, sluiten we het scherm en gaan we door naar "endturn". Werkt zowel
+  // lokaal als in multiplayer omdat dit altijd op de host (of het enige
+  // apparaat bij lokaal spel) wordt uitgevoerd.
+  if(G.phase==="rescue"&&G.players[G.cur]&&G.players[G.cur].money>=0){
+    showToast(`✅ Schuld afbetaald! Saldo: €${G.players[G.cur].money}`,"#4caf50");
+    closeOverlay();G.phase="endturn";G._activeOverlay=null;
+  }
+}
 function doBuild(sid){const sp=SPACES[sid];G.houses[sid]=(G.houses[sid]||0)+1;G.players=G.players.map((p,i)=>i===G.cur?{...p,money:p.money-sp.houseCost}:p);addLog(`Huis op ${sp.name}.`,PCOLORS[G.cur]);refreshUI();}
-function doSell(sid){const sp=SPACES[sid];const sell=Math.floor(sp.houseCost/2);G.houses[sid]--;G.players=G.players.map((p,i)=>i===G.cur?{...p,money:p.money+sell}:p);addLog(`Huis verkocht op ${sp.name} +€${sell}.`,PCOLORS[G.cur]);refreshUI();}
-function doMortgage(sid){const sp=SPACES[sid];G.mortgaged[sid]=true;G.players=G.players.map((p,i)=>i===G.cur?{...p,money:p.money+sp.mortgage}:p);addLog(`Hypotheek ${sp.name} +€${sp.mortgage}.`,PCOLORS[G.cur]);refreshUI();}
+function doSell(sid){const sp=SPACES[sid];const sell=Math.floor(sp.houseCost/2);G.houses[sid]--;G.players=G.players.map((p,i)=>i===G.cur?{...p,money:p.money+sell}:p);addLog(`Huis verkocht op ${sp.name} +€${sell}.`,PCOLORS[G.cur]);checkRescueResolved();refreshUI();}
+function doMortgage(sid){const sp=SPACES[sid];G.mortgaged[sid]=true;G.players=G.players.map((p,i)=>i===G.cur?{...p,money:p.money+sp.mortgage}:p);addLog(`Hypotheek ${sp.name} +€${sp.mortgage}.`,PCOLORS[G.cur]);checkRescueResolved();refreshUI();}
 function doUnmortgage(sid){const sp=SPACES[sid];const cost=Math.floor(sp.mortgage*1.1);G.mortgaged[sid]=false;G.players=G.players.map((p,i)=>i===G.cur?{...p,money:p.money-cost}:p);addLog(`Hypotheek afgelost ${sp.name}.`,PCOLORS[G.cur]);refreshUI();}
 
 let tradeDraft=null;
@@ -1041,7 +1103,37 @@ function submitTrade(){
   if(!tradeDraft)return;
   const{tid,offerIds,reqIds,mo,mr}=tradeDraft;
   if(offerIds.length===0&&reqIds.length===0&&mo===0&&mr===0){showToast("Voeg iets toe aan het aanbod!","#f44");return;}
+
+  if(MP.active && !MP.isHost){
+    // Client: stuur voorstel naar de host, doe zelf niets lokaal —
+    // de host is autoritatief en stuurt straks een bevestigingsverzoek
+    // naar het JUISTE apparaat (mogelijk niet het onze).
+    mpAction("trade_submit",{draft:{tid,offerIds,reqIds,mo,mr}});
+    tradeDraft=null;closeOverlay();
+    showToast("Ruilvoorstel verzonden, wachten op bevestiging...","#FFD700");
+    return;
+  }
+
   const target=G.players[tid];tradeDraft=null;
+  const fromId=G.cur; // altijd de speler die aan zet is
+
+  if(MP.active && MP.isHost){
+    if(tid===0){
+      // Doelspeler is de host zelf → lokale bevestiging
+      renderOverlays({tradeConfirm:{fromId,tid,offerIds,reqIds,mo,mr}});
+    } else {
+      // Doelspeler is een ANDERE client → stuur alleen naar DIE verbinding,
+      // zodat het bevestigingsscherm op het juiste apparaat verschijnt
+      const conn=MP.connections[tid-1];
+      if(conn){
+        try{conn.send({type:"trade_request",fromId,tid,offerIds,reqIds,mo,mr});}catch(e){}
+        showToast(`Ruilvoorstel verzonden naar ${target.name}...`,"#FFD700");
+      }
+    }
+    return;
+  }
+
+  // Lokaal / offline pass-and-play — ongewijzigd gedrag
   if(!target.isHuman){
     if(cpuAcceptsTrade(tid,offerIds,reqIds,mo,mr)){execTrade(offerIds,reqIds,mo,mr,G.cur,tid);addLog(`${target.name} accepteert ruil! ✅`,PCOLORS[tid]);showToast(`${target.name} accepteert! ✅`,"#4caf50");}
     else{addLog(`${target.name} weigert ruil.`,PCOLORS[tid]);showToast(`${target.name} weigert.`,"#ff4444");}
@@ -1315,7 +1407,7 @@ function refreshBottomBar(){
     const rollFn = MP.active && !MP.isHost ? ()=>mpAction("roll") : handleRoll;
     const rb=mkBtn(G.busy?"🎲 Gooien...":curP.inJail?"🎲 Gooi dubbel (gratis)":"🎲 Dobbelstenen gooien","flex:1 1 auto;max-width:220px;padding:14px 0;font-size:16px;font-weight:bold;background:"+(G.busy?"#555":"#FFD700")+";color:"+(G.busy?"#999":"#000")+";border:none;border-radius:10px;",rollFn,G.busy);
     row.appendChild(rb);
-    if(curP.inJail&&!G.busy){const bb2=mkBtn("🔓 Vrijkopen (€50)","flex:1 1 auto;max-width:170px;padding:14px 0;font-size:13px;font-weight:bold;background:"+(curP.money>=50?"#b71c1c":"#333")+";color:"+(curP.money>=50?"#fff":"#666")+";border:none;border-radius:10px;",handleBailOut,curP.money<50);row.appendChild(bb2);}
+    if(curP.inJail&&!G.busy){const bb2=mkBtn("🔓 Vrijkopen (€50)","flex:1 1 auto;max-width:170px;padding:14px 0;font-size:13px;font-weight:bold;background:"+(curP.money>=50?"#b71c1c":"#333")+";color:"+(curP.money>=50?"#fff":"#666")+";border:none;border-radius:10px;",()=>mpDo("bailout",{},handleBailOut),curP.money<50);row.appendChild(bb2);}
   } else if(G.phase==="rescue"&&curP?.isHuman&&isMyTurnMP){
     const debtEl=document.createElement("div");
     debtEl.style.cssText="text-align:center;font-size:13px;color:#ff4444;margin-bottom:6px;font-weight:bold;font-family:Georgia,serif;";
@@ -1390,6 +1482,7 @@ function openSpaceInfo(id){renderOverlays({spaceInfo:id});}
 function closeOverlay(keepDraft){
   DOM.overlayContainer.innerHTML="";
   if(!keepDraft) tradeDraft=null;
+  G._activeOverlay=null;
 }
 
 function backdrop(content,onClick){
@@ -1437,6 +1530,7 @@ function renderSpaceInfoModal(id){
 }
 
 function renderRescueModal(){
+  G._activeOverlay="rescue";
   const pid=G.cur;const p=G.players[pid];
   const debt=Math.abs(p.money);
   const panel_el=panel("");
@@ -1453,7 +1547,9 @@ function renderRescueModal(){
   bal.textContent=`Saldo: €${p.money}`;
   panel_el.appendChild(bal);
 
-  // Properties list with sell/mortgage options
+  // Properties list with sell/mortgage options — nu via mpDo + de gecentraliseerde
+  // doSell/doMortgage functies (die zelf checkRescueResolved aanroepen), zodat
+  // dit ook correct via de host loopt in multiplayer i.p.v. lokaal te muteren.
   const props=p.properties;
   if(props.length===0){
     const d=document.createElement("div");d.style.cssText="color:#555;font-size:13px;text-align:center;padding:12px;";
@@ -1467,7 +1563,6 @@ function renderRescueModal(){
     header.innerHTML=`<span style="font-weight:bold;font-size:12px;color:#fff;text-shadow:0 1px 2px #000">${sp.name}</span><span style="font-size:11px;color:rgba(255,255,255,0.8)">${isMort?"🏦":h>=5?"🏨":h>0?`🏠×${h}`:""}`;
     const btns=document.createElement("div");btns.style.cssText="padding:7px 8px;background:#0d1a0d;display:flex;flex-wrap:wrap;gap:5px;";
 
-    // Sell houses one at a time
     if(sp.type==="property"&&h>0){
       const grp=CGROUPS[sp.color]||[];
       const maxH=Math.max(...grp.map(id=>G.houses[id]||0));
@@ -1475,43 +1570,25 @@ function renderRescueModal(){
       const sellPrice=Math.floor(sp.houseCost/2);
       btns.appendChild(mkBtn(`💰 Verkoop ${h>=5?"hotel":"huis"} +€${sellPrice}`,`padding:5px 10px;font-size:11px;background:${canSell?"#b71c1c":"#1a0a0a"};color:${canSell?"#fff":"#444"};border:none;border-radius:6px;`,()=>{
         if(!canSell)return;
-        G.houses[sid]=h-1;
-        G.players=G.players.map((pl,i)=>i===pid?{...pl,money:pl.money+sellPrice}:pl);
-        addLog(`${p.name} verkoopt huis op ${sp.name} +€${sellPrice}.`,PCOLORS[pid]);
-        // Check if debt is resolved
-        if(G.players[pid].money>=0){
-          showToast(`✅ Schuld afbetaald! Saldo: €${G.players[pid].money}`,"#4caf50");
-          closeOverlay();G.phase="endturn";refreshUI();
-        } else {
-          refreshUI();renderOverlays({rescue:true});
-        }
+        mpDo("sell",{sid},()=>{doSell(sid);if(G.phase==="rescue")renderRescueModal();});
       },!canSell));
     }
 
-    // Mortgage
     if(!isMort){
       const grp=CGROUPS[sp.color]||[];
       const hasHouses=sp.type==="property"&&grp.some(id=>G.houses[id]>0);
       const canMort=!hasHouses;
       btns.appendChild(mkBtn(`🏦 Hypotheek +€${sp.mortgage}`,`padding:5px 10px;font-size:11px;background:${canMort?"#f57c00":"#1a1000"};color:${canMort?"#fff":"#444"};border:none;border-radius:6px;`,()=>{
         if(!canMort)return;
-        G.mortgaged[sid]=true;
-        G.players=G.players.map((pl,i)=>i===pid?{...pl,money:pl.money+sp.mortgage}:pl);
-        addLog(`${p.name} hypotheekt ${sp.name} +€${sp.mortgage}.`,PCOLORS[pid]);
-        if(G.players[pid].money>=0){
-          showToast(`✅ Schuld afbetaald! Saldo: €${G.players[pid].money}`,"#4caf50");
-          closeOverlay();G.phase="endturn";refreshUI();
-        } else {
-          refreshUI();renderOverlays({rescue:true});
-        }
+        mpDo("mortgage",{sid},()=>{doMortgage(sid);if(G.phase==="rescue")renderRescueModal();});
       },!canMort));
     }
 
     if(btns.children.length>0){card.appendChild(header);card.appendChild(btns);panel_el.appendChild(card);}
   });
 
-  // Declare bankrupt button
-  const bkBtn=mkBtn("💀 Opgeven — ik ben failliet","width:100%;padding:11px 0;background:#1a0a0a;color:#888;border:1px solid #333;border-radius:8px;font-size:13px;margin-top:8px;",()=>declareBankrupt(pid));
+  // Declare bankrupt button — ook via mpDo (host moet dit uitvoeren)
+  const bkBtn=mkBtn("💀 Opgeven — ik ben failliet","width:100%;padding:11px 0;background:#1a0a0a;color:#888;border:1px solid #333;border-radius:8px;font-size:13px;margin-top:8px;",()=>mpDo("bankrupt_self",{},()=>declareBankrupt(pid)));
   panel_el.appendChild(bkBtn);
 
   backdrop(panel_el,null); // null = don't close on backdrop tap (player must act)
@@ -1651,13 +1728,14 @@ function renderOverlaysMPTradeConfirm(data) {
     <div style="font-size:12px;color:#ccc;margin-bottom:8px"><b style="color:${PCOLORS[data.fromId]}">${G.players[data.fromId]?.name}</b> biedt:<div style="color:#4caf50;margin-top:4px">${(data.offerIds||[]).map(id=>`<div>• ${SPACES[id].name}</div>`).join("")}${data.mo>0?`<div>• €${data.mo}</div>`:""}</div></div>
     <div style="font-size:12px;color:#ccc;margin-bottom:14px">In ruil voor:<div style="color:#ff8a65;margin-top:4px">${(data.reqIds||[]).map(id=>`<div>• ${SPACES[id].name}</div>`).join("")}${data.mr>0?`<div>• €${data.mr}</div>`:""}</div></div>
     <div style="display:flex;gap:8px">`;
-  const acc=mkBtn("✅ Accepteren","flex:1;padding:11px 0;background:#2e7d32;color:#fff;border:none;border-radius:8px;font-weight:bold;font-size:14px;",()=>{mpAction("trade_confirm",{offerIds:data.offerIds,reqIds:data.reqIds,mo:data.mo,mr:data.mr,fromId:data.fromId,toId:data.toId});DOM.overlayContainer.innerHTML="";});
+  const acc=mkBtn("✅ Accepteren","flex:1;padding:11px 0;background:#2e7d32;color:#fff;border:none;border-radius:8px;font-weight:bold;font-size:14px;",()=>{mpAction("trade_confirm",{offerIds:data.offerIds,reqIds:data.reqIds,mo:data.mo,mr:data.mr,fromId:data.fromId,toId:data.tid});DOM.overlayContainer.innerHTML="";});
   const rej=mkBtn("❌ Weigeren","flex:1;padding:11px 0;background:#424242;color:#fff;border:none;border-radius:8px;font-size:14px;",()=>{mpAction("trade_reject");DOM.overlayContainer.innerHTML="";});
   p.querySelector("div:last-child").appendChild(acc);p.querySelector("div:last-child").appendChild(rej);
   bd.appendChild(p);DOM.overlayContainer.appendChild(bd);
 }
 
 function renderManageModal(){
+  G._activeOverlay="manage";
   const p=panel("");
   p.innerHTML=`<div style="display:flex;justify-content:space-between;margin-bottom:12px"><h3 style="color:#FFD700;margin:0">🏗️ Beheer bezittingen</h3><button onclick="closeOverlay()" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer">✕</button></div>`;
   const sortedProps=sortedByGroup(G.players[G.cur]?.properties||[]);
@@ -1685,11 +1763,11 @@ function renderManageModal(){
     const btns=document.createElement("div");btns.style.cssText="padding:8px 10px;background:#0d1a0d;display:flex;flex-wrap:wrap;gap:6px;";
     if(sp.type==="property"){
       const bOk=canBuildHouse(sid),sOk=canSellHouse(sid);
-      btns.appendChild(mkBtn(`🏠 Bouw (€${sp.houseCost})`,`padding:5px 10px;font-size:11px;background:${bOk?"#2e7d32":"#1a2a1a"};color:${bOk?"#fff":"#444"};border:none;border-radius:6px;`,()=>{doBuild(sid);renderManageModal();},!bOk));
-      btns.appendChild(mkBtn(`💰 Verkoop (€${Math.floor(sp.houseCost/2)})`,`padding:5px 10px;font-size:11px;background:${sOk?"#b71c1c":"#1a0a0a"};color:${sOk?"#fff":"#444"};border:none;border-radius:6px;`,()=>{doSell(sid);renderManageModal();},!sOk));
+      btns.appendChild(mkBtn(`🏠 Bouw (€${sp.houseCost})`,`padding:5px 10px;font-size:11px;background:${bOk?"#2e7d32":"#1a2a1a"};color:${bOk?"#fff":"#444"};border:none;border-radius:6px;`,()=>{mpDo("build",{sid},()=>{doBuild(sid);renderManageModal();});},!bOk));
+      btns.appendChild(mkBtn(`💰 Verkoop (€${Math.floor(sp.houseCost/2)})`,`padding:5px 10px;font-size:11px;background:${sOk?"#b71c1c":"#1a0a0a"};color:${sOk?"#fff":"#444"};border:none;border-radius:6px;`,()=>{mpDo("sell",{sid},()=>{doSell(sid);renderManageModal();});},!sOk));
     }
-    if(!isMort){const mOk=canMortgage(sid);btns.appendChild(mkBtn(`🏦 Hypotheek (€${sp.mortgage})`,`padding:5px 10px;font-size:11px;background:${mOk?"#f57c00":"#1a1000"};color:${mOk?"#fff":"#444"};border:none;border-radius:6px;`,()=>{doMortgage(sid);renderManageModal();},!mOk));}
-    else{const uOk=canUnmortgage(sid);btns.appendChild(mkBtn(`✅ Aflossen (€${Math.floor(sp.mortgage*1.1)})`,`padding:5px 10px;font-size:11px;background:${uOk?"#1a6e1a":"#0a0a0a"};color:${uOk?"#fff":"#444"};border:none;border-radius:6px;`,()=>{doUnmortgage(sid);renderManageModal();},!uOk));}
+    if(!isMort){const mOk=canMortgage(sid);btns.appendChild(mkBtn(`🏦 Hypotheek (€${sp.mortgage})`,`padding:5px 10px;font-size:11px;background:${mOk?"#f57c00":"#1a1000"};color:${mOk?"#fff":"#444"};border:none;border-radius:6px;`,()=>{mpDo("mortgage",{sid},()=>{doMortgage(sid);renderManageModal();});},!mOk));}
+    else{const uOk=canUnmortgage(sid);btns.appendChild(mkBtn(`✅ Aflossen (€${Math.floor(sp.mortgage*1.1)})`,`padding:5px 10px;font-size:11px;background:${uOk?"#1a6e1a":"#0a0a0a"};color:${uOk?"#fff":"#444"};border:none;border-radius:6px;`,()=>{mpDo("unmortgage",{sid},()=>{doUnmortgage(sid);renderManageModal();});},!uOk));}
     card.appendChild(header);card.appendChild(btns);p.appendChild(card);
   });
   const others=G.players.filter((p2,i)=>i!==G.cur&&!p2.bankrupt);
