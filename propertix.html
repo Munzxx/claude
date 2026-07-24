@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v14.4">
+<meta name="apple-mobile-web-app-title" content="Propertix v15.0">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v14.4</title>
+<title>Propertix v15.0</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -154,7 +154,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v14.4";
+const APP_VERSION="v15.0";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -508,6 +508,22 @@ function mpJoinRoom(code, playerName) {
 }
 
 // ── HOST: Start the multiplayer game ─────────────────────────────────────────
+// Stuurt de HUIDIGE (host-)spelstatus als "game_start" naar alle verbonden
+// clients. Herbruikt zowel bij een gloednieuw spel als bij het laden van een
+// opgeslagen spel — in beide gevallen moet elke client exact dezelfde status
+// krijgen als waarmee de host net is begonnen.
+function mpBroadcastGameStart(){
+  if(!MP.isHost) return;
+  MP.connections.forEach((conn, i) => {
+    conn.send({ type: "game_start", pid: i+1, state: {
+      players: G.players, owned: G.owned, houses: G.houses,
+      mortgaged: G.mortgaged, cur: G.cur, phase: G.phase,
+      log: G.log, pawnPos: {...G.pawnPos}, freePot: G.freePot,
+      dice: G.dice, busy: G.busy,
+    }});
+  });
+}
+
 function mpStartGame() {
   if (!MP.isHost) return;
   const numPlayers = 1 + MP.connections.length;
@@ -520,16 +536,42 @@ function mpStartGame() {
   MP.active = true;
   startGame();
   // After startGame builds state, sync to all clients (pid staat al vast sinds connectie)
-  setTimeout(() => {
-    MP.connections.forEach((conn, i) => {
-      conn.send({ type: "game_start", pid: i+1, state: {
-        players: G.players, owned: G.owned, houses: G.houses,
-        mortgaged: G.mortgaged, cur: G.cur, phase: G.phase,
-        log: G.log, pawnPos: {...G.pawnPos}, freePot: G.freePot,
-        dice: G.dice, busy: G.busy,
-      }});
-    });
-  }, 500);
+  setTimeout(mpBroadcastGameStart, 500);
+}
+
+// Host laadt een lokaal opgeslagen spel (of de autosave) en stuurt die status
+// naar ALLE verbonden spelers, zodat iedereen tegelijk met hetzelfde spel verder gaat.
+function mpLoadSavedGame(slotOrAuto){
+  if(!MP.isHost) return;
+  try{
+    const key = slotOrAuto==="auto" ? "prx_auto" : `prx_${slotOrAuto}`;
+    const r=localStorage.getItem(key);
+    if(!r){showToast("Geen opgeslagen spel gevonden.","#f44");return;}
+    const d=JSON.parse(r);
+
+    const numConnected = 1 + MP.connections.length;
+    if(!d.players || d.players.length !== numConnected){
+      showToast(`⚠️ Deze save heeft ${d.players?.length||0} spelers, maar er zijn nu ${numConnected} verbonden. Aantal moet gelijk zijn.`,"#f44");
+      return;
+    }
+
+    G.players=d.players;
+    G.owned={};Object.entries(d.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
+    G.houses={};Object.entries(d.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
+    G.mortgaged={};Object.entries(d.mortgaged||{}).forEach(([k,v])=>{G.mortgaged[parseInt(k)]=v;});
+    G.cur=d.cur;G.phase=d.phase||"roll";G.log=d.log||[];
+    G.pawnPos={};Object.entries(d.pawnPos||{}).forEach(([k,v])=>{G.pawnPos[parseInt(k)]=v;});
+    G.freePot=d.freePot||0;G.chanceIdx=d.chanceIdx||0;G.chestIdx=d.chestIdx||0;G.busy=false;
+
+    MP.active=true;
+    DOM.overlayContainer.innerHTML=""; // sluit de lobby
+    DOM.app.innerHTML="";
+    DOM.app.style.cssText="height:100%;display:flex;flex-direction:column;";
+    buildGameScreen();
+
+    showToast("✅ Opgeslagen spel geladen voor iedereen!","#4caf50");
+    setTimeout(mpBroadcastGameStart, 500);
+  }catch(e){showToast("❌ Laden mislukt.","#f44");}
 }
 
 // Patch existing action handlers to sync after each action
@@ -1672,7 +1714,7 @@ function renderMPLobby() {
 
   if (MP.isHost) {
     const startBtn = mkBtn(
-      numConnected === 0 ? "⏳ Wacht op spelers" : `▶ Start met ${numConnected+1} spelers`,
+      numConnected === 0 ? "⏳ Wacht op spelers" : `▶ Start nieuw spel (${numConnected+1} spelers)`,
       "flex:1;padding:12px 0;font-size:14px;font-weight:bold;background:" + (numConnected>0?"#FFD700":"#333") + ";color:" + (numConnected>0?"#000":"#666") + ";border:none;border-radius:10px;",
       mpStartGame, numConnected === 0
     );
@@ -1686,6 +1728,47 @@ function renderMPLobby() {
   });
   btnRow.appendChild(leaveBtn);
   box.appendChild(btnRow);
+
+  // ── Host: opgeslagen spel laden en meteen naar alle verbonden spelers sturen ──
+  if (MP.isHost && numConnected > 0) {
+    loadSlotMeta(); // ververst G.savedSlots + G.autoSaveSlot
+    const numNeeded = numConnected + 1;
+    const loadSection = document.createElement("div");
+    loadSection.style.cssText = "margin-top:14px;border-top:1px solid #2a4a2a;padding-top:12px;text-align:left;";
+    const loadTitle = document.createElement("div");
+    loadTitle.style.cssText = "font-size:11px;color:#888;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;";
+    loadTitle.textContent = `Of laad een opgeslagen spel voor ${numNeeded} spelers`;
+    loadSection.appendChild(loadTitle);
+
+    const slots = [
+      { key: "auto", meta: G.autoSaveSlot, label: "⚡ Autosave" },
+      { key: 0, meta: G.savedSlots[0], label: "Slot 1" },
+      { key: 1, meta: G.savedSlots[1], label: "Slot 2" },
+      { key: 2, meta: G.savedSlots[2], label: "Slot 3" },
+    ];
+    let anyMatch = false;
+    slots.forEach(s => {
+      if (!s.meta) return;
+      const savedPlayerCount = (s.meta.names || "").split(",").filter(x=>x.trim()).length;
+      const matches = savedPlayerCount === numNeeded;
+      if (matches) anyMatch = true;
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px;background:rgba(255,255,255,0.04);border-radius:8px;padding:7px 10px;border:1px solid #2a4a2a;";
+      const info = document.createElement("div"); info.style.flex="1";
+      info.innerHTML = `<div style="font-size:11px;color:#FFD700;font-weight:bold">${s.label}</div><div style="font-size:9px;color:#888">${s.meta.date} — ${s.meta.names}</div>`;
+      row.appendChild(info);
+      row.appendChild(mkBtn(matches?"📂 Laden":"Aantal komt niet overeen", `padding:6px 10px;font-size:11px;background:${matches?"#1a6e1a":"#222"};color:${matches?"#fff":"#555"};border:none;border-radius:6px;`, ()=>mpLoadSavedGame(s.key), !matches));
+      loadSection.appendChild(row);
+    });
+    if (!anyMatch) {
+      const hint = document.createElement("div");
+      hint.style.cssText = "font-size:10px;color:#666;font-style:italic;margin-top:4px;";
+      hint.textContent = `Geen enkele save heeft precies ${numNeeded} spelers.`;
+      loadSection.appendChild(hint);
+    }
+    box.appendChild(loadSection);
+  }
+
   bd.appendChild(box);
   DOM.overlayContainer.appendChild(bd);
 }
