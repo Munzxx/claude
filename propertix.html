@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v14.2">
+<meta name="apple-mobile-web-app-title" content="Propertix v14.3">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v14.2</title>
+<title>Propertix v14.3</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -154,7 +154,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v14.2";
+const APP_VERSION="v14.3";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -353,8 +353,23 @@ function mpHandleMessage(data, fromConn) {
     }
     else if (data.type === "game_start") {
       MP.myPid = data.pid; // definitief spelernummer bij start
-      mpApplySync(data.state);
-      buildGameScreen();
+      MP.active = true;    // was nooit gezet op de client — brak alle beurt-gating
+      // Zet de status RECHTSTREEKS (niet via mpApplySync/refreshUI), want die
+      // functies verwachten bestaande spel-DOM elementen (topBar/bord/pionnen/etc)
+      // — die bestaan bij de gast nog niet, hij zat immers nog in de lobby.
+      // Eerst status zetten, DAN de DOM bouwen op basis daarvan.
+      const st = data.state;
+      G.players = st.players;
+      G.owned = {}; Object.entries(st.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
+      G.houses = {}; Object.entries(st.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
+      G.mortgaged = {}; Object.entries(st.mortgaged||{}).forEach(([k,v])=>{G.mortgaged[parseInt(k)]=v;});
+      G.cur = st.cur; G.phase = st.phase||"roll"; G.freePot = st.freePot||0;
+      G.log = st.log || []; G.dice = st.dice || [1,1]; G.busy = st.busy||false;
+      G.pawnPos = {}; Object.entries(st.pawnPos||{}).forEach(([k,v])=>{G.pawnPos[parseInt(k)]=v;});
+      DOM.app.innerHTML = "";
+      DOM.app.style.cssText = "height:100%;display:flex;flex-direction:column;";
+      DOM.overlayContainer.innerHTML = ""; // sluit het lobby-scherm, dat stond los als overlay
+      buildGameScreen(); // bouwt nu de DOM correct op basis van de al-gezette status
     }
     else if (data.type === "kicked") {
       mpReset();
