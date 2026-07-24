@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v14.3">
+<meta name="apple-mobile-web-app-title" content="Propertix v14.4">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v14.3</title>
+<title>Propertix v14.4</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -154,7 +154,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v14.3";
+const APP_VERSION="v14.4";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -1081,18 +1081,20 @@ function handleRoll(){
 
 function handleBailOut(){
   if(!G.players[G.cur]?.inJail||G.players[G.cur].money<50)return;
+  const bailName=G.players[G.cur].name;
   G.players=G.players.map((p,i)=>i===G.cur?{...p,inJail:false,jailTurns:0,money:p.money-50}:p);
-  G.freePot+=50;addLog(`Jij betaalt €50 borgtocht → pot.`,PCOLORS[G.cur]);
+  G.freePot+=50;addLog(`${bailName} betaalt €50 borgtocht → pot.`,PCOLORS[G.cur]);
   showToast("🔓 Vrijgekocht voor €50!","#FFD700");refreshUI();
 }
 function handleBuy(){
   const sp=SPACES[G.players[G.cur].pos];
+  const buyerName=G.players[G.cur].name;
   if(G.players[G.cur].money<sp.price){addLog("Niet genoeg geld!","#f44");G.phase="endturn";refreshUI();return;}
   G.owned[sp.id]=G.cur;
   G.players=G.players.map((p,i)=>i===G.cur?{...p,money:p.money-sp.price,properties:[...p.properties,sp.id]}:p);
-  addLog(`Je koopt ${sp.name} voor €${sp.price}.`,PCOLORS[G.cur]);G.phase="endturn";refreshUI();
+  addLog(`${buyerName} koopt ${sp.name} voor €${sp.price}.`,PCOLORS[G.cur]);G.phase="endturn";refreshUI();
 }
-function handleSkip(){addLog(`Je koopt ${SPACES[G.players[G.cur].pos].name} niet.`,"#888");G.phase="endturn";refreshUI();}
+function handleSkip(){addLog(`${G.players[G.cur].name} koopt ${SPACES[G.players[G.cur].pos].name} niet.`,"#888");G.phase="endturn";refreshUI();}
 
 function canBuildHouse(sid){const sp=SPACES[sid];if(sp.type!=="property"||G.owned[sid]!==G.cur||G.mortgaged[sid])return false;const grp=CGROUPS[sp.color]||[];if(!grp.every(id=>G.owned[id]===G.cur&&!G.mortgaged[id]))return false;const h=G.houses[sid]||0;if(h>=5)return false;const min=Math.min(...grp.map(id=>G.houses[id]||0));return h<=min&&G.players[G.cur].money>=sp.houseCost;}
 function canSellHouse(sid){const sp=SPACES[sid];if(sp.type!=="property"||G.owned[sid]!==G.cur)return false;const h=G.houses[sid]||0;if(h===0)return false;const max=Math.max(...(CGROUPS[sp.color]||[]).map(id=>G.houses[id]||0));return h===max;}
