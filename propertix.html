@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v15.0">
+<meta name="apple-mobile-web-app-title" content="Propertix v15.1">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v15.0</title>
+<title>Propertix v15.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -154,7 +154,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v15.0";
+const APP_VERSION="v15.1";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -741,10 +741,11 @@ function applyCard(pc,pid,result,oc){
   // Retourneert of nieuwe positie nog een landing-check nodig heeft
   // (moveBack/moveToNearest hebben zelf geen geldafhandeling)
   let needsLandingCheck=false;
+  G._cardAnimType="forward"; // hoe de 2e animatie (naar de kaart-positie) moet lopen
   if(result.money)pc[pid]={...pc[pid],money:pc[pid].money+result.money};
   if(result.moveTo!=null)pc[pid]={...pc[pid],pos:result.moveTo};
-  if(result.moveBack){pc[pid]={...pc[pid],pos:((pc[pid].pos-result.moveBack)+40)%40};needsLandingCheck=true;}
-  if(result.goToJail)pc[pid]={...pc[pid],pos:10,inJail:true,jailTurns:0};
+  if(result.moveBack){pc[pid]={...pc[pid],pos:((pc[pid].pos-result.moveBack)+40)%40};needsLandingCheck=true;G._cardAnimType="back";}
+  if(result.goToJail){pc[pid]={...pc[pid],pos:10,inJail:true,jailTurns:0};G._cardAnimType="teleport";addLog(`${pc[pid].name} moet naar de gevangenis zonder langs start te gaan. ${pc[pid].name} ontvangt geen €200.`,"#ff4444");}
   if(result.collectFromAll)pc.forEach((_,i)=>{if(i!==pid&&!pc[i].bankrupt){pc[i]={...pc[i],money:pc[i].money-result.collectFromAll};pc[pid]={...pc[pid],money:pc[pid].money+result.collectFromAll};}});
   if(result.moveToNearest){const rr=[5,15,25,35];pc[pid]={...pc[pid],pos:rr.find(r=>r>pc[pid].pos)||rr[0]};needsLandingCheck=true;}
   return needsLandingCheck;
@@ -757,7 +758,7 @@ function processLanding(pc,oc,pid,pos,diceTotal){
     if(G.freePot>0){pc[pid]={...pl,money:pl.money+G.freePot};showToast(`🅿 Vrij Parkeren! +€${G.freePot} 🎉`,"#4caf50");G.freePot=0;}
     else showToast("🅿 Vrij Parkeren — pot leeg.","#aaa");
   }
-  else if(sp.type==="gotojail"){pc[pid]={...pl,pos:10,inJail:true,jailTurns:0};showToast("🚔 Naar de gevangenis!","#ff4444");}
+  else if(sp.type==="gotojail"){pc[pid]={...pl,pos:10,inJail:true,jailTurns:0};showToast("🚔 Naar de gevangenis!","#ff4444");addLog(`${pl.name} moet naar de gevangenis zonder langs start te gaan. ${pl.name} ontvangt geen €200.`,"#ff4444");G._cardAnimType="teleport";}
   else if(sp.type==="tax"){const t=sp.rent[0];pc[pid]={...pl,money:pl.money-t};G.freePot+=t;showToast(`💸 Belasting -€${t} → pot`,"#ff8800");}
   else if(sp.type==="chest"){const c=G.chestCards[G.chestIdx%G.chestCards.length];G.chestIdx++;showToast(`🎁 ${c.t}`,"#9b59b6");if(applyCard(pc,pid,c.a(),oc))G._needsSecondLanding=true;}
   else if(sp.type==="chance"){const c=G.chanceCards[G.chanceIdx%G.chanceCards.length];G.chanceIdx++;showToast(`❓ ${c.t}`,"#e67e22");if(applyCard(pc,pid,c.a(),oc))G._needsSecondLanding=true;}
@@ -990,14 +991,16 @@ function setDieFace(el,val){
 }
 
 // Pawn: moves the CSS-transitioned pawn element step by step
-function animatePawn(pid,from,steps,onDone){
+function animatePawn(pid,from,steps,onDone,backward){
   // Pion beweegt via CSS transform (GPU, geen ghosting).
   // Camera scrollt INSTANT elke stap mee — smooth scroll vecht met
   // de CSS transition en geeft ghosting. Instant = geen conflict.
+  // backward=true (bv. "Ga 3 stappen terug"-kaart): pion loopt achteruit
+  // i.p.v. bijna het hele bord vooruit rond te lopen naar dezelfde positie.
   let step=0;
   function next(){
     step++;
-    const pos=(from+step)%40;
+    const pos=backward?(((from-step)%40+40)%40):((from+step)%40);
     G.pawnPos[pid]=pos;
     placePawn(pid,pos);        // GPU transform — pion schuift soepel
     scrollToPos(pos, true);    // instant scroll — camera volgt elke stap
@@ -1072,28 +1075,32 @@ function executeMove(pid,d1,d2,cb){
 
     if(finalPos!==to){
       // Card moved player (moveBack, moveTo, moveToNearest, goToJail)
-      const steps=(finalPos-to+40)%40||40;
+      const animType=G._cardAnimType||"forward";
+      const afterSecondMove=()=>{
+        G.pawnPos[pid]=finalPos;
+        placePawn(pid,finalPos);
+        scrollToPos(finalPos);
+        // moveBack/moveToNearest: het nieuwe vakje moet alsnog normaal
+        // verwerkt worden (kopen/huur betalen), want dat is nog niet gebeurd
+        if(needsSecondLanding){
+          np=processLanding(pc,oc,pid,finalPos,total);
+          checkBankrupt(pc,oc);
+          G.players=pc;G.owned=oc;
+        }
+        finishMove();
+      };
       setTimeout(()=>{
-        if(steps>0&&steps<40){
-          animatePawn(pid,to,steps,()=>{
-            G.pawnPos[pid]=finalPos;
-            placePawn(pid,finalPos);
-            scrollToPos(finalPos);
-            // moveBack/moveToNearest: het nieuwe vakje moet alsnog normaal
-            // verwerkt worden (kopen/huur betalen), want dat is nog niet gebeurd
-            if(needsSecondLanding){
-              np=processLanding(pc,oc,pid,finalPos,total);
-              checkBankrupt(pc,oc);
-              G.players=pc;G.owned=oc;
-            }
-            finishMove();
-          });
+        if(animType==="teleport"){
+          // Gevangenis: direct teleporteren, geen stap-animatie — anders lijkt
+          // het alsof de pion langs START loopt en €200 zou krijgen.
+          afterSecondMove();
+        } else if(animType==="back"){
+          // "Ga 3 stappen terug": echt achteruit lopen, niet vooruit rond het bord.
+          const steps=(to-finalPos+40)%40||40;
+          animatePawn(pid,to,steps,afterSecondMove,true);
         } else {
-          // Teleport (goToJail = pos 10, of moveTo=0 naar START)
-          G.pawnPos[pid]=finalPos;
-          placePawn(pid,finalPos);
-          scrollToPos(finalPos);
-          finishMove();
+          const steps=(finalPos-to+40)%40||40;
+          animatePawn(pid,to,steps,afterSecondMove);
         }
       },400);
     } else {
