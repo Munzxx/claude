@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v15.2">
+<meta name="apple-mobile-web-app-title" content="Propertix v15.3">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v15.2</title>
+<title>Propertix v15.3</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -154,7 +154,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v15.2";
+const APP_VERSION="v15.3";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -162,6 +162,12 @@ const DOTS={1:[[50,50]],2:[[25,25],[75,75]],3:[[25,25],[50,50],[75,75]],4:[[25,2
 
 function shuffle(a){const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]];}return b;}
 function rng(){return Math.ceil(Math.random()*6);}
+// Spelernamen komen van andere spelers via het P2P-kanaal (client_hello) en zijn dus
+// niet vertrouwd — deze escaped ze voor gebruik in innerHTML, zodat iemand geen
+// <img onerror=...> als naam kan gebruiken om code te laten draaien bij andere spelers.
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+// Trimt/knipt een binnenkomende naam af op intake (los van esc(), dat pas bij het renderen gebeurt)
+function sanitizeName(n){return String(n??"").trim().slice(0,20);}
 function gridPos(id){if(id<=9)return[10-id,10];if(id<=19)return[0,10-(id-10)];if(id<=29)return[id-20,0];return[10,id-30];}
 function cellPx(c){return c===0?0:CORNER+(c-1)*CELL;}
 function cellSz(id){return[0,10,20,30].includes(id)?CORNER:CELL;}
@@ -274,7 +280,7 @@ function mpHandleMessage(data, fromConn) {
     // Host verwerkt handshake van een nieuwe client
     if (data.type === "client_hello") {
       const pid = MP.connections.indexOf(fromConn) + 1; // 1-based
-      MP.roster[pid] = { name: data.name || `Speler ${pid+1}`, isHuman: true };
+      MP.roster[pid] = { name: sanitizeName(data.name) || `Speler ${pid+1}`, isHuman: true };
       // Stuur de VOLLEDIGE roster naar iedereen zodat alle lobbies synchroon lopen
       mpBroadcastRoster();
       renderMPLobby();
@@ -676,7 +682,7 @@ function confirmDeleteGame(slot){
   bd.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;";
   const box=document.createElement("div");
   box.style.cssText="background:#1a0a0a;border:2px solid #7f0000;border-radius:14px;padding:24px 20px;max-width:300px;width:100%;text-align:center;font-family:Georgia,serif;color:#fff;";
-  box.innerHTML=`<div style="font-size:28px;margin-bottom:8px">🗑️</div><h3 style="color:#ff4444;margin:0 0 8px;font-size:16px">Slot ${slot+1} verwijderen?</h3><p style="color:#aaa;font-size:13px;margin-bottom:18px">${G.savedSlots[slot]?.names||""}<br><span style="font-size:11px">${G.savedSlots[slot]?.date||""}</span></p>`;
+  box.innerHTML=`<div style="font-size:28px;margin-bottom:8px">🗑️</div><h3 style="color:#ff4444;margin:0 0 8px;font-size:16px">Slot ${slot+1} verwijderen?</h3><p style="color:#aaa;font-size:13px;margin-bottom:18px">${esc(G.savedSlots[slot]?.names||"")}<br><span style="font-size:11px">${G.savedSlots[slot]?.date||""}</span></p>`;
   const btnRow=document.createElement("div");btnRow.style.cssText="display:flex;gap:10px;justify-content:center;";
   const cancelBtn=document.createElement("button");cancelBtn.textContent="Annuleren";
   cancelBtn.style.cssText="flex:1;padding:11px 0;background:#333;color:#aaa;border:none;border-radius:8px;font-size:14px;cursor:pointer;font-family:Georgia,serif;";
@@ -1387,7 +1393,7 @@ function refreshTopBar(){
   G.players.forEach((p,i)=>{
     const card=document.createElement("div");
     card.style.cssText=`background:${G.cur===i&&!p.bankrupt?"rgba(255,215,0,0.12)":"rgba(255,255,255,0.04)"};border:1px solid ${G.cur===i&&!p.bankrupt?"#FFD700":"#2a4a2a"};border-radius:8px;padding:4px 8px;flex-shrink:0;opacity:${p.bankrupt?0.3:1};font-family:Georgia,serif;`;
-    card.innerHTML=`<div style="display:flex;align-items:center;gap:3px"><span style="font-size:13px">${p.token}</span><span style="font-size:10px;color:${PCOLORS[i]};font-weight:bold">${p.name}</span>${G.cur===i&&!p.bankrupt?'<span style="font-size:9px;color:#FFD700">▶</span>':''}</div><div style="font-size:11px;color:#4caf50;font-weight:bold">€${p.money}</div>${p.inJail?'<div style="font-size:8px;color:#ff8800">🔒 cel</div>':''}`;
+    card.innerHTML=`<div style="display:flex;align-items:center;gap:3px"><span style="font-size:13px">${esc(p.token)}</span><span style="font-size:10px;color:${PCOLORS[i]};font-weight:bold">${esc(p.name)}</span>${G.cur===i&&!p.bankrupt?'<span style="font-size:9px;color:#FFD700">▶</span>':''}</div><div style="font-size:11px;color:#4caf50;font-weight:bold">€${p.money}</div>${p.inJail?'<div style="font-size:8px;color:#ff8800">🔒 cel</div>':''}`;
     tb.appendChild(card);
   });
   const btnGrp=document.createElement("div");btnGrp.style.cssText="margin-left:auto;display:flex;gap:5px;flex-shrink:0;";
@@ -1463,7 +1469,7 @@ function refreshBottomBar(){
   if(curSp&&curP?.isHuman&&isMyTurnMP){
     const lbl=document.createElement("div");
     lbl.style.cssText="text-align:center;font-size:12px;color:#ccc;margin-bottom:6px;font-family:Georgia,serif;";
-    lbl.innerHTML=`<b style="color:${curP.color}">${curP.name}</b> staat op: <b style="color:#FFD700">${curSp.name}</b>${curSp.price>0?` — €${curSp.price}`:""}${curP.inJail?'<span style="color:#ff8800"> 🔒</span>':""}`;
+    lbl.innerHTML=`<b style="color:${curP.color}">${esc(curP.name)}</b> staat op: <b style="color:#FFD700">${curSp.name}</b>${curSp.price>0?` — €${curSp.price}`:""}${curP.inJail?'<span style="color:#ff8800"> 🔒</span>':""}`;
     bb.appendChild(lbl);
   }
   // Action buttons row
@@ -1517,7 +1523,7 @@ function refreshOverlayWinner(){
     const w=active[0];
     const ov=document.createElement("div");
     ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:200;display:flex;align-items:center;justify-content:center;";
-    ov.innerHTML=`<div style="background:#1a3a1a;border:3px solid #FFD700;border-radius:20px;padding:40px;text-align:center;max-width:300px;font-family:Georgia,serif"><div style="font-size:52px">${w.token}</div><h2 style="color:#FFD700;font-size:24px;margin:12px 0 6px">${w.name} wint!</h2><p style="color:#aaa;margin-bottom:20px">Eindsaldo: €${w.money}</p></div>`;
+    ov.innerHTML=`<div style="background:#1a3a1a;border:3px solid #FFD700;border-radius:20px;padding:40px;text-align:center;max-width:300px;font-family:Georgia,serif"><div style="font-size:52px">${esc(w.token)}</div><h2 style="color:#FFD700;font-size:24px;margin:12px 0 6px">${esc(w.name)} wint!</h2><p style="color:#aaa;margin-bottom:20px">Eindsaldo: €${w.money}</p></div>`;
     const btn=document.createElement("button");btn.textContent="Nieuw spel";btn.style.cssText="padding:12px 28px;background:#FFD700;color:#000;border:none;border-radius:8px;font-size:15px;cursor:pointer;font-weight:bold;font-family:Georgia,serif;";btn.onclick=()=>showMenu();ov.querySelector("div").appendChild(btn);
     DOM.overlayContainer.innerHTML="";DOM.overlayContainer.appendChild(ov);
   }
@@ -1575,7 +1581,7 @@ function renderSpaceInfoModal(id){
       <button onclick="closeOverlay()" style="background:none;border:none;color:#888;font-size:22px;cursor:pointer">✕</button>
     </div>`;
   if(isMort)html+=`<div style="background:rgba(198,40,40,0.15);border:1px solid #c62828;border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:#ef9a9a">⚠️ Hypotheek actief — geen huur te innen</div>`;
-  if(owner)html+=`<div style="margin-bottom:8px;font-size:13px;color:${PCOLORS[oid]}">Eigenaar: ${owner.token} ${owner.name}${mono?" ✦ Monopoly":""}</div>`;
+  if(owner)html+=`<div style="margin-bottom:8px;font-size:13px;color:${PCOLORS[oid]}">Eigenaar: ${esc(owner.token)} ${esc(owner.name)}${mono?" ✦ Monopoly":""}</div>`;
   if(!owner&&sp.price>0)html+=`<div style="margin-bottom:8px;font-size:13px;color:#aaa">Te koop voor <b style="color:#FFD700">€${sp.price}</b></div>`;
   if(sp.type==="free")html+=`<div style="font-size:14px;color:#4caf50;margin-bottom:8px">🅿 Huidige pot: €${G.freePot}</div>`;
   if(sp.type==="property"){
@@ -1604,7 +1610,7 @@ function renderRescueModal(){
   // Header
   const hdr=document.createElement("div");
   hdr.style.cssText="margin-bottom:12px;";
-  hdr.innerHTML=`<h3 style="color:#ff4444;margin:0 0 4px">⚠️ Te weinig geld!</h3><div style="font-size:13px;color:#ccc">${p.name} heeft <b style="color:#ff4444">€${debt}</b> te weinig. Verkoop huizen of verhypotheek straten om te betalen.</div>`;
+  hdr.innerHTML=`<h3 style="color:#ff4444;margin:0 0 4px">⚠️ Te weinig geld!</h3><div style="font-size:13px;color:#ccc">${esc(p.name)} heeft <b style="color:#ff4444">€${debt}</b> te weinig. Verkoop huizen of verhypotheek straten om te betalen.</div>`;
   panel_el.appendChild(hdr);
 
   // Current balance
@@ -1762,7 +1768,7 @@ function renderMPLobby() {
       const row = document.createElement("div");
       row.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px;background:rgba(255,255,255,0.04);border-radius:8px;padding:7px 10px;border:1px solid #2a4a2a;";
       const info = document.createElement("div"); info.style.flex="1";
-      info.innerHTML = `<div style="font-size:11px;color:#FFD700;font-weight:bold">${s.label}</div><div style="font-size:9px;color:#888">${s.meta.date} — ${s.meta.names}</div>`;
+      info.innerHTML = `<div style="font-size:11px;color:#FFD700;font-weight:bold">${s.label}</div><div style="font-size:9px;color:#888">${s.meta.date} — ${esc(s.meta.names)}</div>`;
       row.appendChild(info);
       row.appendChild(mkBtn(matches?"📂 Laden":"Aantal komt niet overeen", `padding:6px 10px;font-size:11px;background:${matches?"#1a6e1a":"#222"};color:${matches?"#fff":"#555"};border:none;border-radius:6px;`, ()=>mpLoadSavedGame(s.key), !matches));
       loadSection.appendChild(row);
@@ -1800,7 +1806,7 @@ function showMPSetup() {
 
   // Create room button
   box.appendChild(mkBtn("🏠 Kamer aanmaken (Host)","width:100%;padding:12px 0;font-size:15px;font-weight:bold;background:#FFD700;color:#000;border:none;border-radius:10px;margin-bottom:10px;",()=>{
-    mpCreateRoom(nameInp.value||"Host"); // mpCreateRoom zet MP.roster[0] zelf correct
+    mpCreateRoom(sanitizeName(nameInp.value)||"Host"); // mpCreateRoom zet MP.roster[0] zelf correct
   }));
 
   // Divider
@@ -1817,7 +1823,7 @@ function showMPSetup() {
     const code=codeInp.value.trim();
     if(code.length!==4){showToast("Voer een 4-cijferige code in","#f44");return;}
     // MP.myPid wordt straks door de host gezet via het "your_pid" bericht
-    mpJoinRoom(code, nameInp.value||"Speler");
+    mpJoinRoom(code, sanitizeName(nameInp.value)||"Speler");
   }));
   box.appendChild(codeRow);
 
@@ -1893,7 +1899,7 @@ function renderTradeModal(tid){
   if(!tradeDraft)tradeDraft={tid,offerIds:[],reqIds:[],mo:0,mr:0};
   const p=panel("");
   const hdr=document.createElement("div");hdr.style.cssText="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;";
-  hdr.innerHTML=`<h3 style="color:#FFD700;margin:0;font-size:16px">Ruilen met ${target?.token} ${target?.name}</h3><button onclick="closeOverlay()" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1">✕</button>`;
+  hdr.innerHTML=`<h3 style="color:#FFD700;margin:0;font-size:16px">Ruilen met ${esc(target?.token)} ${esc(target?.name)}</h3><button onclick="closeOverlay()" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1">✕</button>`;
   p.appendChild(hdr);
   // Live summary
   const summary=document.createElement("div");
@@ -1978,7 +1984,7 @@ function renderSavePanel(){
   p.innerHTML=`<h2 style="color:#FFD700;margin:0 0 16px;font-size:18px;text-align:center">💾 Opslaan / Laden</h2>`;
   [0,1,2].forEach(i=>{
     const row=document.createElement("div");row.style.cssText="display:flex;align-items:center;gap:8px;margin-bottom:10px;background:rgba(255,255,255,0.04);border-radius:10px;padding:10px 12px;border:1px solid #2a4a2a;";
-    const info=document.createElement("div");info.style.flex="1";info.innerHTML=`<div style="font-size:12px;color:#FFD700;font-weight:bold">Slot ${i+1}</div>${G.savedSlots[i]?`<div style="font-size:10px;color:#aaa;line-height:1.5">${G.savedSlots[i].date} — ${G.savedSlots[i].names}</div>`:'<div style="font-size:10px;color:#555;font-style:italic">Leeg</div>'}`;
+    const info=document.createElement("div");info.style.flex="1";info.innerHTML=`<div style="font-size:12px;color:#FFD700;font-weight:bold">Slot ${i+1}</div>${G.savedSlots[i]?`<div style="font-size:10px;color:#aaa;line-height:1.5">${G.savedSlots[i].date} — ${esc(G.savedSlots[i].names)}</div>`:'<div style="font-size:10px;color:#555;font-style:italic">Leeg</div>'}`;
     row.appendChild(info);
     row.appendChild(mkBtn("💾","padding:7px 10px;font-size:11px;background:#2e7d32;color:#fff;border:none;border-radius:7px;font-weight:bold;",()=>saveGame(i)));
     row.appendChild(mkBtn("📂",`padding:7px 10px;font-size:11px;background:${G.savedSlots[i]?"#1a6e1a":"#222"};color:${G.savedSlots[i]?"#fff":"#555"};border:none;border-radius:7px;`,()=>{loadGame(i);closeOverlay();},!G.savedSlots[i]));
@@ -2068,7 +2074,7 @@ function showMenu(){
   if(G.autoSaveSlot){
     const asDiv=document.createElement("div");
     asDiv.style.cssText="background:rgba(255,215,0,0.06);border:1px solid #4a6a2a;border-radius:12px;padding:12px;margin-bottom:14px;display:flex;align-items:center;gap:10px;";
-    asDiv.innerHTML=`<div style="flex:1"><div style="font-size:12px;color:#FFD700;font-weight:bold;margin-bottom:2px">⚡ Autosave</div><div style="font-size:10px;color:#aaa">${G.autoSaveSlot.date} — ${G.autoSaveSlot.names}</div></div>`;
+    asDiv.innerHTML=`<div style="flex:1"><div style="font-size:12px;color:#FFD700;font-weight:bold;margin-bottom:2px">⚡ Autosave</div><div style="font-size:10px;color:#aaa">${G.autoSaveSlot.date} — ${esc(G.autoSaveSlot.names)}</div></div>`;
     asDiv.appendChild(mkBtn("▶ Hervat","padding:8px 14px;font-size:13px;font-weight:bold;background:#FFD700;color:#000;border:none;border-radius:8px;",loadAutoSave));
     box.appendChild(asDiv);
   }
@@ -2087,7 +2093,7 @@ function showMenu(){
   [0,1,2].forEach(i=>{
     const row=document.createElement("div");row.style.cssText="display:flex;align-items:center;gap:8px;margin-bottom:8px;background:rgba(255,255,255,0.04);border-radius:8px;padding:8px 10px;border:1px solid #2a4a2a;";
     const info=document.createElement("div");info.style.flex="1";info.style.textAlign="left";
-    info.innerHTML=`<div style="font-size:11px;color:#FFD700;font-weight:bold">Slot ${i+1}</div>${G.savedSlots[i]?`<div style="font-size:10px;color:#aaa;line-height:1.5">${G.savedSlots[i].date}<br>${G.savedSlots[i].names}</div>`:'<div style="font-size:10px;color:#555;font-style:italic">Leeg</div>'}`;
+    info.innerHTML=`<div style="font-size:11px;color:#FFD700;font-weight:bold">Slot ${i+1}</div>${G.savedSlots[i]?`<div style="font-size:10px;color:#aaa;line-height:1.5">${G.savedSlots[i].date}<br>${esc(G.savedSlots[i].names)}</div>`:'<div style="font-size:10px;color:#555;font-style:italic">Leeg</div>'}`;
     row.appendChild(info);
     row.appendChild(mkBtn("📂 Laden",`padding:7px 10px;font-size:12px;background:${G.savedSlots[i]?"#1a6e1a":"#222"};color:${G.savedSlots[i]?"#fff":"#555"};border:none;border-radius:7px;`,()=>loadGame(i),!G.savedSlots[i]));
     row.appendChild(mkBtn("🗑️",`padding:7px 8px;font-size:12px;background:${G.savedSlots[i]?"#7f0000":"#1a0000"};color:${G.savedSlots[i]?"#fff":"#333"};border:none;border-radius:7px;`,()=>confirmDeleteGame(i),!G.savedSlots[i]));
