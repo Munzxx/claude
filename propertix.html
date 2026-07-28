@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v15.4">
+<meta name="apple-mobile-web-app-title" content="Propertix v15.5">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v15.4</title>
+<title>Propertix v15.5</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -59,6 +59,15 @@ input{font-family:Georgia,serif}
   pointer-events:none;
 }
 @keyframes fadeup{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Zwevend +€/-€ bedrag boven een spelerskaart bij een geldwijziging */
+@keyframes moneyFloat{
+  0%{opacity:0;transform:translate(-50%,4px) scale(0.9)}
+  15%{opacity:1;transform:translate(-50%,0) scale(1)}
+  75%{opacity:1}
+  100%{opacity:0;transform:translate(-50%,-16px) scale(1)}
+}
+.money-float{animation:moneyFloat 1.1s ease forwards}
 </style>
 </head>
 <body>
@@ -162,7 +171,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v15.4";
+const APP_VERSION="v15.5";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -373,7 +382,7 @@ function mpHandleMessage(data, fromConn) {
       // — die bestaan bij de gast nog niet, hij zat immers nog in de lobby.
       // Eerst status zetten, DAN de DOM bouwen op basis daarvan.
       const st = data.state;
-      G.players = st.players;
+      G.players = st.players; G.prevMoney = {};
       G.owned = {}; Object.entries(st.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
       G.houses = {}; Object.entries(st.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
       G.mortgaged = {}; Object.entries(st.mortgaged||{}).forEach(([k,v])=>{G.mortgaged[parseInt(k)]=v;});
@@ -569,7 +578,7 @@ function mpLoadSavedGame(slotOrAuto){
       return;
     }
 
-    G.players=d.players;
+    G.players=d.players;G.prevMoney={};
     G.owned={};Object.entries(d.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
     G.houses={};Object.entries(d.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
     G.mortgaged={};Object.entries(d.mortgaged||{}).forEach(([k,v])=>{G.mortgaged[parseInt(k)]=v;});
@@ -653,7 +662,7 @@ function loadAutoSave(){
     const r=localStorage.getItem("prx_auto");
     if(!r){showToast("Geen autosave gevonden.","#f44");return;}
     const d=JSON.parse(r);
-    G.players=d.players;
+    G.players=d.players;G.prevMoney={};
     G.owned={};Object.entries(d.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
     G.houses={};Object.entries(d.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
     G.mortgaged={};Object.entries(d.mortgaged||{}).forEach(([k,v])=>{G.mortgaged[parseInt(k)]=v;});
@@ -722,7 +731,7 @@ function loadGame(slot){
     const r=localStorage.getItem(`prx_${slot}`);
     if(!r){showToast("❌ Geen save gevonden.","#f44");return;}
     const d=JSON.parse(r);
-    G.players=d.players;
+    G.players=d.players;G.prevMoney={};
     // Convert object keys from strings to ints (JSON stringifies int keys)
     G.owned={};Object.entries(d.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
     G.houses={};Object.entries(d.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
@@ -1398,11 +1407,41 @@ function refreshUI(){
 
 function refreshTopBar(){
   const tb=DOM.topBar;tb.innerHTML="";
+  if(!G.prevMoney)G.prevMoney={};
   G.players.forEach((p,i)=>{
     const card=document.createElement("div");
-    card.style.cssText=`background:${G.cur===i&&!p.bankrupt?"rgba(255,215,0,0.12)":"rgba(255,255,255,0.04)"};border:1px solid ${G.cur===i&&!p.bankrupt?"#FFD700":"#2a4a2a"};border-radius:8px;padding:4px 8px;flex-shrink:0;opacity:${p.bankrupt?0.3:1};font-family:Georgia,serif;`;
-    card.innerHTML=`<div style="display:flex;align-items:center;gap:3px"><span style="font-size:13px">${esc(p.token)}</span><span style="font-size:10px;color:${PCOLORS[i]};font-weight:bold">${esc(p.name)}</span>${G.cur===i&&!p.bankrupt?'<span style="font-size:9px;color:#FFD700">▶</span>':''}</div><div style="font-size:11px;color:#4caf50;font-weight:bold">€${p.money}</div>${p.inJail?'<div style="font-size:8px;color:#ff8800">🔒 cel</div>':''}`;
+    card.style.cssText=`background:${G.cur===i&&!p.bankrupt?"rgba(255,215,0,0.12)":"rgba(255,255,255,0.04)"};border:1px solid ${G.cur===i&&!p.bankrupt?"#FFD700":"#2a4a2a"};border-radius:8px;padding:4px 8px;flex-shrink:0;opacity:${p.bankrupt?0.3:1};font-family:Georgia,serif;position:relative;`;
+    const nameRow=document.createElement("div");
+    nameRow.style.cssText="display:flex;align-items:center;gap:3px";
+    nameRow.innerHTML=`<span style="font-size:13px">${esc(p.token)}</span><span style="font-size:10px;color:${PCOLORS[i]};font-weight:bold">${esc(p.name)}</span>${G.cur===i&&!p.bankrupt?'<span style="font-size:9px;color:#FFD700">▶</span>':''}`;
+    card.appendChild(nameRow);
+    const moneyDiv=document.createElement("div");
+    moneyDiv.style.cssText="font-size:11px;color:#4caf50;font-weight:bold";
+    card.appendChild(moneyDiv);
+    if(p.inJail){const jl=document.createElement("div");jl.style.cssText="font-size:8px;color:#ff8800";jl.textContent="🔒 cel";card.appendChild(jl);}
     tb.appendChild(card);
+
+    // Geld-teller: bij een verschil met de vorige render tellen we vloeiend op/af
+    // i.p.v. instant te springen, en tonen we een zwevend +€/-€ bedrag.
+    const prev=G.prevMoney[p.id];
+    const delta=(prev!=null)?p.money-prev:0;
+    if(delta!==0){
+      const start=prev,end=p.money,dur=600,t0=performance.now();
+      (function tick(now){
+        const k=Math.min(1,(now-t0)/dur);
+        moneyDiv.textContent="€"+Math.round(start+(end-start)*k);
+        if(k<1)requestAnimationFrame(tick);else moneyDiv.textContent="€"+end;
+      })(t0);
+      const badge=document.createElement("div");
+      badge.className="money-float";
+      badge.textContent=(delta>0?"+€":"-€")+Math.abs(delta);
+      badge.style.cssText=`position:absolute;top:-4px;left:50%;font-size:10px;font-weight:bold;color:${delta>0?"#69f0ae":"#ff5252"};text-shadow:0 1px 2px rgba(0,0,0,0.7);pointer-events:none;z-index:5;white-space:nowrap;`;
+      card.appendChild(badge);
+      setTimeout(()=>badge.remove(),1150);
+    } else {
+      moneyDiv.textContent="€"+p.money;
+    }
+    G.prevMoney[p.id]=p.money;
   });
   const btnGrp=document.createElement("div");btnGrp.style.cssText="margin-left:auto;display:flex;gap:5px;flex-shrink:0;";
   const saveBtn=document.createElement("button");
@@ -2124,7 +2163,7 @@ function showMenu(){
 
 function startGame(){
   const p=initPlayers(G.playerSetup);const pp={};p.forEach(pl=>{pp[pl.id]=0;});
-  G.players=p;G.pawnPos=pp;G.owned={};G.houses={};G.mortgaged={};
+  G.players=p;G.pawnPos=pp;G.owned={};G.houses={};G.mortgaged={};G.prevMoney={};
   G.cur=0;G.phase="roll";G.log=[];G.freePot=0;G.busy=false;
   G.chanceCards=shuffle(CHANCE);G.chestCards=shuffle(CHEST);G.chanceIdx=0;G.chestIdx=0;
   tradeDraft=null;
