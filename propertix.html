@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v15.5">
+<meta name="apple-mobile-web-app-title" content="Propertix v15.6">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v15.5</title>
+<title>Propertix v15.6</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -68,6 +68,12 @@ input{font-family:Georgia,serif}
   100%{opacity:0;transform:translate(-50%,-16px) scale(1)}
 }
 .money-float{animation:moneyFloat 1.1s ease forwards}
+
+/* Confetti bij het winnen van het spel */
+@keyframes confettiFall{
+  0%{transform:translateY(0) rotate(0deg);opacity:0.95}
+  100%{transform:translateY(110vh) rotate(540deg);opacity:0}
+}
 </style>
 </head>
 <body>
@@ -171,7 +177,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v15.5";
+const APP_VERSION="v15.6";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -382,7 +388,7 @@ function mpHandleMessage(data, fromConn) {
       // — die bestaan bij de gast nog niet, hij zat immers nog in de lobby.
       // Eerst status zetten, DAN de DOM bouwen op basis daarvan.
       const st = data.state;
-      G.players = st.players; G.prevMoney = {};
+      G.players = st.players; G.prevMoney = {}; G.wonPid = null;
       G.owned = {}; Object.entries(st.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
       G.houses = {}; Object.entries(st.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
       G.mortgaged = {}; Object.entries(st.mortgaged||{}).forEach(([k,v])=>{G.mortgaged[parseInt(k)]=v;});
@@ -578,7 +584,7 @@ function mpLoadSavedGame(slotOrAuto){
       return;
     }
 
-    G.players=d.players;G.prevMoney={};
+    G.players=d.players;G.prevMoney={};G.wonPid=null;
     G.owned={};Object.entries(d.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
     G.houses={};Object.entries(d.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
     G.mortgaged={};Object.entries(d.mortgaged||{}).forEach(([k,v])=>{G.mortgaged[parseInt(k)]=v;});
@@ -662,7 +668,7 @@ function loadAutoSave(){
     const r=localStorage.getItem("prx_auto");
     if(!r){showToast("Geen autosave gevonden.","#f44");return;}
     const d=JSON.parse(r);
-    G.players=d.players;G.prevMoney={};
+    G.players=d.players;G.prevMoney={};G.wonPid=null;
     G.owned={};Object.entries(d.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
     G.houses={};Object.entries(d.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
     G.mortgaged={};Object.entries(d.mortgaged||{}).forEach(([k,v])=>{G.mortgaged[parseInt(k)]=v;});
@@ -731,7 +737,7 @@ function loadGame(slot){
     const r=localStorage.getItem(`prx_${slot}`);
     if(!r){showToast("❌ Geen save gevonden.","#f44");return;}
     const d=JSON.parse(r);
-    G.players=d.players;G.prevMoney={};
+    G.players=d.players;G.prevMoney={};G.wonPid=null;
     // Convert object keys from strings to ints (JSON stringifies int keys)
     G.owned={};Object.entries(d.owned||{}).forEach(([k,v])=>{G.owned[parseInt(k)]=v;});
     G.houses={};Object.entries(d.houses||{}).forEach(([k,v])=>{G.houses[parseInt(k)]=v;});
@@ -1575,15 +1581,50 @@ function refreshLog(){
   bb.appendChild(logDiv);
 }
 
+// Vrolijk oplopend arpeggio, volledig gesynthetiseerd — geen geluidsbestand nodig
+function playWinSound(){
+  try{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    const notes=[523.25,659.25,783.99,1046.50]; // C5 E5 G5 C6
+    notes.forEach((freq,i)=>{
+      const t=ctx.currentTime+i*0.11;
+      const osc=ctx.createOscillator(),gain=ctx.createGain();
+      osc.type="triangle";osc.frequency.setValueAtTime(freq,t);
+      gain.gain.setValueAtTime(0,t);
+      gain.gain.linearRampToValueAtTime(0.18,t+0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001,t+0.35);
+      osc.connect(gain);gain.connect(ctx.destination);
+      osc.start(t);osc.stop(t+0.4);
+    });
+  }catch(e){/* geen audio beschikbaar — geen probleem, spel werkt gewoon door */}
+}
+function triggerConfetti(container){
+  const colors=["#FFD700","#4caf50","#42A5F5","#F06292","#FF7043","#E53935"];
+  for(let i=0;i<36;i++){
+    const p=document.createElement("div");
+    const left=(Math.random()*100).toFixed(1),dur=(1.8+Math.random()*1.2).toFixed(2),
+          delay=(Math.random()*0.4).toFixed(2),size=5+Math.random()*4,rot=Math.random()*360;
+    p.style.cssText=`position:absolute;top:-10px;left:${left}%;width:${size}px;height:${size*0.4}px;background:${colors[i%colors.length]};opacity:0.9;transform:rotate(${rot}deg);animation:confettiFall ${dur}s ease-in ${delay}s forwards;pointer-events:none;z-index:250;`;
+    container.appendChild(p);
+    setTimeout(()=>p.remove(),(parseFloat(dur)+parseFloat(delay))*1000+150);
+  }
+}
 function refreshOverlayWinner(){
   const active=G.players.filter(p=>!p.bankrupt);
   if(active.length===1&&G.players.length>1){
     const w=active[0];
     const ov=document.createElement("div");
-    ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:200;display:flex;align-items:center;justify-content:center;";
+    ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:200;display:flex;align-items:center;justify-content:center;overflow:hidden;";
     ov.innerHTML=`<div style="background:#1a3a1a;border:3px solid #FFD700;border-radius:20px;padding:40px;text-align:center;max-width:300px;font-family:Georgia,serif"><div style="font-size:52px">${esc(w.token)}</div><h2 style="color:#FFD700;font-size:24px;margin:12px 0 6px">${esc(w.name)} wint!</h2><p style="color:#aaa;margin-bottom:20px">Eindsaldo: €${w.money}</p></div>`;
     const btn=document.createElement("button");btn.textContent="Nieuw spel";btn.style.cssText="padding:12px 28px;background:#FFD700;color:#000;border:none;border-radius:8px;font-size:15px;cursor:pointer;font-weight:bold;font-family:Georgia,serif;";btn.onclick=()=>showMenu();ov.querySelector("div").appendChild(btn);
     DOM.overlayContainer.innerHTML="";DOM.overlayContainer.appendChild(ov);
+    // Confetti + geluid maar ÉÉN keer per overwinning, ook al wordt refreshOverlayWinner()
+    // daarna nog vaker aangeroepen (bv. door refreshUI() tijdens MP-sync).
+    if(G.wonPid!==w.id){
+      G.wonPid=w.id;
+      triggerConfetti(ov);
+      playWinSound();
+    }
   }
 }
 
@@ -2163,7 +2204,7 @@ function showMenu(){
 
 function startGame(){
   const p=initPlayers(G.playerSetup);const pp={};p.forEach(pl=>{pp[pl.id]=0;});
-  G.players=p;G.pawnPos=pp;G.owned={};G.houses={};G.mortgaged={};G.prevMoney={};
+  G.players=p;G.pawnPos=pp;G.owned={};G.houses={};G.mortgaged={};G.prevMoney={};G.wonPid=null;
   G.cur=0;G.phase="roll";G.log=[];G.freePot=0;G.busy=false;
   G.chanceCards=shuffle(CHANCE);G.chestCards=shuffle(CHEST);G.chanceIdx=0;G.chestIdx=0;
   tradeDraft=null;
