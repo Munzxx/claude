@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v15.7">
+<meta name="apple-mobile-web-app-title" content="Propertix v15.8">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v15.7</title>
+<title>Propertix v15.8</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -185,7 +185,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v15.7";
+const APP_VERSION="v15.8";
 const TOKENS=["🎩","🚂","🐶","⚓"];
 const PCOLORS=["#E53935","#1E88E5","#43A047","#FB8C00"];
 const CELL=44,CORNER=60,BOARD=CORNER*2+CELL*9;
@@ -243,6 +243,7 @@ const MP = {
                        // losstaand van G.playerSetup (dat is voor lokaal pass-and-play)
   animatingPid: null,  // client: pid waarvan de dobbel/loop-animatie nu lokaal wordt nagespeeld
   pendingSync: null,   // client: binnengekomen sync die wacht tot de animatie klaar is
+  cpuSlots: [],         // host: door de host toegevoegde CPU-spelers, komen ná de echte connecties
 };
 
 // ── MULTIPLAYER HELPERS ───────────────────────────────────────────────────────
@@ -303,6 +304,8 @@ function mpApplySyncNow(state) {
   // Als er een geopend beheer/rescue-scherm is, ververs die met de nieuwe status
   if (G._activeOverlay === "manage") renderManageModal();
   else if (G._activeOverlay === "rescue") renderRescueModal();
+  // Nieuw rescue-scherm automatisch openen, maar alleen bij de speler die het aangaat
+  else if (G.phase === "rescue" && G.cur === MP.myPid) renderOverlays({rescue:true});
 }
 
 function mpHandleMessage(data, fromConn) {
@@ -354,10 +357,20 @@ function mpHandleMessage(data, fromConn) {
       // Host stuurt dit VOORDAT hij zelf begint te animeren — wij spelen
       // exact dezelfde dobbelsteen- en loopanimatie lokaal na, zodat beide
       // spelers hetzelfde zien gebeuren, in plaats van alleen het eindresultaat.
-      const { pid, d1, d2 } = data;
+      const { pid, d1, d2, wasInJail, jailTurns } = data;
       const fromPos = G.players[pid]?.pos ?? 0;
+      // Zelfde regel als in executeMove(): in de cel blijven zitten (geen dubbel,
+      // nog geen 3e mislukte poging) betekent geen pion-beweging — anders leek het
+      // bij de andere speler alsof iemand vrolijk over het bord liep terwijl die
+      // gewoon vastzat.
+      const staysInJail = wasInJail && d1!==d2 && jailTurns<2;
       MP.animatingPid = pid;
       animateDice(d1, d2, () => {
+        if(staysInJail){
+          MP.animatingPid = null;
+          if (MP.pendingSync) { const s = MP.pendingSync; MP.pendingSync = null; mpApplySyncNow(s); }
+          return;
+        }
         animatePawn(pid, fromPos, d1+d2, () => {
           MP.animatingPid = null;
           // Als er ondertussen een sync is binnengekomen, verwerk die nu alsnog
@@ -369,6 +382,7 @@ function mpHandleMessage(data, fromConn) {
       // Host stuurt de volledige, actuele deelnemerslijst — dit is de
       // enige bron van waarheid, overschrijft lokale placeholder-namen
       MP.roster = data.roster || [];
+      MP.cpuSlots = data.cpuSlots || [];
       renderMPLobby();
     }
     else if (data.type === "your_pid") {
@@ -384,6 +398,9 @@ function mpHandleMessage(data, fromConn) {
     else if (data.type === "chat") {
       addLog(`💬 ${data.name}: ${data.msg}`, "#aaa");
       refreshLog();
+    }
+    else if (data.type === "card_reveal") {
+      showCardFlip(data.opts);
     }
     else if (data.type === "player_joined") {
       showToast(`${data.name} heeft de lobby betreden!`, "#4caf50");
@@ -420,7 +437,7 @@ function mpHandleMessage(data, fromConn) {
 // Host: broadcast de volledige roster naar alle verbonden clients
 function mpBroadcastRoster() {
   if (!MP.isHost) return;
-  MP.connections.forEach(c => { try { c.send({ type:"roster_update", roster: MP.roster }); } catch(e){} });
+  MP.connections.forEach(c => { try { c.send({ type:"roster_update", roster: MP.roster, cpuSlots: MP.cpuSlots }); } catch(e){} });
 }
 
 // Client sends an action to host
@@ -450,7 +467,7 @@ function mpReset() {
   if (MP.peer) { try { MP.peer.destroy(); } catch(e){} }
   MP.active = false; MP.isHost = false; MP.peer = null;
   MP.connections = []; MP.hostConn = null;
-  MP.myPid = 0; MP.roomCode = null; MP.status = "";
+  MP.myPid = 0; MP.roomCode = null; MP.status = ""; MP.cpuSlots = [];
 }
 
 // Generate short room code from PeerJS id
@@ -571,6 +588,9 @@ function mpStartGame() {
     name: MP.roster[i]?.name || (i===0 ? "Host" : `Speler ${i+1}`),
     isHuman: true,
   }));
+  // Door de host toegevoegde CPU's komen er ACHTERAAN bij, zodat de al-vaststaande
+  // pid's van de echte (verbonden) spelers niet verschuiven.
+  MP.cpuSlots.forEach(cpu => G.playerSetup.push({ name: cpu.name, isHuman: false }));
   MP.active = true;
   startGame();
   // After startGame builds state, sync to all clients (pid staat al vast sinds connectie)
@@ -800,9 +820,9 @@ function processLanding(pc,oc,pid,pos,diceTotal){
     else showToast("🅿 Vrij Parkeren — pot leeg.","#aaa");
   }
   else if(sp.type==="gotojail"){pc[pid]={...pl,pos:10,inJail:true,jailTurns:0};showToast("🚔 Naar de gevangenis!","#ff4444");addLog(`${pl.name} moet naar de gevangenis zonder langs start te gaan. ${pl.name} ontvangt geen €200.`,"#ff4444");G._cardAnimType="teleport";}
-  else if(sp.type==="tax"){const t=sp.rent[0];pc[pid]={...pl,money:pl.money-t};G.freePot+=t;showToast(`💸 Belasting -€${t} → pot`,"#ff8800");}
-  else if(sp.type==="chest"){const c=G.chestCards[G.chestIdx%G.chestCards.length];G.chestIdx++;showToast(`🎁 ${c.t}`,"#9b59b6");if(applyCard(pc,pid,c.a(),oc))G._needsSecondLanding=true;}
-  else if(sp.type==="chance"){const c=G.chanceCards[G.chanceIdx%G.chanceCards.length];G.chanceIdx++;showToast(`❓ ${c.t}`,"#e67e22");if(applyCard(pc,pid,c.a(),oc))G._needsSecondLanding=true;}
+  else if(sp.type==="tax"){const t=sp.rent[0];pc[pid]={...pl,money:pl.money-t};G.freePot+=t;mpBroadcastCardReveal({title:sp.name,icon:"💸",colorBg:"#ff8800",lines:[`<b style="color:#c62828;font-size:15px">-€${t}</b>`,"gaat naar de gemeenschapspot"]});}
+  else if(sp.type==="chest"){const c=G.chestCards[G.chestIdx%G.chestCards.length];G.chestIdx++;mpBroadcastCardReveal({title:"Algemeen Fonds",icon:"🎁",colorBg:"#9b59b6",lines:[c.t]});if(applyCard(pc,pid,c.a(),oc))G._needsSecondLanding=true;}
+  else if(sp.type==="chance"){const c=G.chanceCards[G.chanceIdx%G.chanceCards.length];G.chanceIdx++;mpBroadcastCardReveal({title:"Kans",icon:"❓",colorBg:"#e67e22",lines:[c.t]});if(applyCard(pc,pid,c.a(),oc))G._needsSecondLanding=true;}
   else if(sp.type==="utility"){
     const oid=oc[sp.id];
     if(oid==null){ph=pl.isHuman?"buy":"endturn";if(!pl.isHuman)cpuBuy(pc,oc,pid,sp);}
@@ -1085,7 +1105,11 @@ function executeMove(pid,d1,d2,cb){
   }
 
   const from=pc[pid].pos;const to=(from+total)%40;
-  if(to<from){pc[pid]={...pc[pid],money:pc[pid].money+200};addLog(`${pl.name} passeert START +€200`,"#FFD700");}
+  if(to<from){
+    pc[pid]={...pc[pid],money:pc[pid].money+200};
+    if(to===0) addLog(`${pl.name} komt direct op START — dat telt als passeren én landen, dus 2x €200!`,"#FFD700");
+    else addLog(`${pl.name} passeert START, ontvangt €200.`,"#FFD700");
+  }
   pc[pid]={...pc[pid],pos:to};
   addLog(`${pl.name} gooit ${d1}+${d2}=${total} → ${SPACES[to].name}`,PCOLORS[pid]);
 
@@ -1108,7 +1132,11 @@ function executeMove(pid,d1,d2,cb){
     function finishMove(){
       // Re-read from G.players (already updated above)
       if(G.players[pid]?.isHuman && isInDebt(pid) && canPlayerRaiseMoney(pid)){
-        G.phase="rescue";G.busy=false;refreshUI();renderOverlays({rescue:true});
+        G.phase="rescue";G.busy=false;refreshUI();
+        // Alleen lokaal openen als IK (dit apparaat) de speler ben die moet betalen —
+        // anders zag de host dit scherm ook als het een client-speler betrof (en
+        // omgekeerd). De client die het wél aangaat opent 'm zelf via mpApplySyncNow.
+        if(!MP.active||pid===MP.myPid) renderOverlays({rescue:true});
       } else {
         cb(np);
       }
@@ -1158,7 +1186,7 @@ function handleRoll(){
   // exact dezelfde animatie tegelijk met de host kunnen afspelen — hierdoor ziet
   // iedereen wat er gedobbeld wordt en hoe het pion loopt, niet alleen het eindresultaat.
   if (MP.active && MP.isHost) {
-    mpSend({ type:"turn_animate", pid:G.cur, d1, d2 });
+    mpSend({ type:"turn_animate", pid:G.cur, d1, d2, wasInJail:!!G.players[G.cur]?.inJail, jailTurns:G.players[G.cur]?.jailTurns||0 });
   }
   // First animate dice, only AFTER they stop → move pawn
   animateDice(d1,d2,()=>{
@@ -1176,30 +1204,39 @@ function handleBailOut(){
   G.freePot+=50;addLog(`${bailName} betaalt €50 borgtocht → pot.`,PCOLORS[G.cur]);
   showToast("🔓 Vrijgekocht voor €50!","#FFD700");refreshUI();
 }
-// Toont een omdraaiende "eigendomsakte" bovenop het scherm bij het kopen van een straat —
-// puur visueel, blokkeert niets en heeft geen invloed op de spellogica zelf.
-function showDeedCardFlip(sp){
+// Generieke omdraaiende kaart-overlay — gebruikt voor het kopen van een straat, maar
+// ook voor kans/kist-kaarten en belasting, zodat die "op dezelfde manier" getoond
+// worden. lines[] mag kleine inline HTML bevatten (alleen gevuld met eigen, vaste
+// spelteksten — nooit met speler-input, dus geen esc() nodig op dat niveau).
+function showCardFlip(opts){
   const wrap=document.createElement("div");
   wrap.style.cssText="position:fixed;inset:0;z-index:220;display:flex;align-items:center;justify-content:center;pointer-events:none;perspective:800px;";
   const card=document.createElement("div");
-  card.style.cssText="width:150px;height:210px;position:relative;transform-style:preserve-3d;animation:deedFlip 1.1s cubic-bezier(.4,0,.2,1) forwards;";
+  card.style.cssText="width:170px;height:230px;position:relative;transform-style:preserve-3d;animation:deedFlip 1s cubic-bezier(.4,0,.2,1) forwards;";
   const back=document.createElement("div");
   back.style.cssText="position:absolute;inset:0;border-radius:10px;background:linear-gradient(135deg,#1a3a1a,#0d1f0d);border:2px solid #FFD700;backface-visibility:hidden;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 30px rgba(0,0,0,0.6);";
-  back.innerHTML=`<div style="font-size:28px">🏛️</div>`;
-  const cb=CMAP[sp.color];
-  const rentLine=sp.type==="utility"?"Huur: afhankelijk van worp":sp.type==="railroad"?`Huur: €${sp.rent[0]}+`:`Huur: €${sp.rent[0]}`;
+  back.innerHTML=`<div style="font-size:28px">${opts.backIcon||"🏛️"}</div>`;
   const front=document.createElement("div");
   front.style.cssText="position:absolute;inset:0;border-radius:10px;background:#fdf6e3;border:2px solid #333;backface-visibility:hidden;transform:rotateY(180deg);overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.6);display:flex;flex-direction:column;";
-  front.innerHTML=`<div style="background:${cb||"#555"};height:34px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:11px;text-align:center;padding:0 6px;text-shadow:0 1px 2px rgba(0,0,0,0.4)">${esc(sp.name)}</div>
-    <div style="flex:1;padding:8px;color:#333;font-size:9px;text-align:center;display:flex;flex-direction:column;justify-content:center;gap:4px">
-      <div style="font-weight:bold;color:#2e7d32;font-size:14px">€${sp.price}</div>
-      <div>${rentLine}</div>
-      <div style="margin-top:8px;font-size:8px;color:#999;letter-spacing:1px">GEKOCHT</div>
-    </div>`;
+  front.innerHTML=`<div style="background:${opts.colorBg||"#555"};padding:8px 6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:12px;text-align:center;text-shadow:0 1px 2px rgba(0,0,0,0.4)">${opts.icon?opts.icon+" ":""}${esc(opts.title)}</div>
+    <div style="flex:1;padding:12px;color:#333;font-size:11px;text-align:center;display:flex;flex-direction:column;justify-content:center;gap:7px;line-height:1.45">${(opts.lines||[]).map(l=>`<div>${l}</div>`).join("")}</div>`;
   card.appendChild(back);card.appendChild(front);
   wrap.appendChild(card);
   DOM.overlayContainer.appendChild(wrap);
-  setTimeout(()=>wrap.remove(),1500);
+  // Lang genoeg laten staan om echt te kunnen lezen (was eerst 1.5s — te kort).
+  setTimeout(()=>wrap.remove(),opts.duration||4000);
+}
+// Toont de kaart lokaal EN stuurt 'm naar alle verbonden spelers, zodat iedereen
+// exact hetzelfde te zien krijgt — niet alleen degene bij wie de host toevallig
+// de spellogica uitvoert.
+function mpBroadcastCardReveal(opts){
+  showCardFlip(opts);
+  if(MP.active&&MP.isHost) mpSend({type:"card_reveal",opts});
+}
+function showDeedCardFlip(sp){
+  const cb=CMAP[sp.color];
+  const rentLine=sp.type==="utility"?"Huur: afhankelijk van worp":sp.type==="railroad"?`Huur: €${sp.rent[0]}+`:`Huur: €${sp.rent[0]}`;
+  showCardFlip({title:sp.name,colorBg:cb||"#555",lines:[`<b style="color:#2e7d32;font-size:15px">€${sp.price}</b>`,rentLine,`<span style="color:#999;font-size:9px;letter-spacing:1px">GEKOCHT</span>`]});
 }
 function handleBuy(){
   const sp=SPACES[G.players[G.cur].pos];
@@ -1309,6 +1346,11 @@ function handleEndTurn(){
 function runCPU(pid){
   if(G.busy)return;G.busy=true;
   const d1=rng(),d2=rng();
+  // Zelfde mirror-bericht als bij een menselijke worp, anders "springt" een CPU-beurt
+  // gewoon naar het eindresultaat bij de andere spelers in plaats van te animeren.
+  if (MP.active && MP.isHost) {
+    mpSend({ type:"turn_animate", pid, d1, d2, wasInJail:!!G.players[pid]?.inJail, jailTurns:G.players[pid]?.jailTurns||0 });
+  }
   animateDice(d1,d2,()=>{
     executeMove(pid,d1,d2,_np=>{
       // build houses
@@ -1755,9 +1797,13 @@ function renderSpaceInfoModal(id){
 
 function renderRescueModal(){
   G._activeOverlay="rescue";
+  const prevPanel=DOM.overlayContainer.querySelector(".rescue-scroll");
+  const prevScroll=prevPanel?prevPanel.scrollTop:0;
+  DOM.overlayContainer.innerHTML="";
   const pid=G.cur;const p=G.players[pid];
   const debt=Math.abs(p.money);
   const panel_el=panel("");
+  panel_el.className="rescue-scroll";
 
   // Header
   const hdr=document.createElement("div");
@@ -1816,6 +1862,7 @@ function renderRescueModal(){
   panel_el.appendChild(bkBtn);
 
   backdrop(panel_el,null); // null = don't close on backdrop tap (player must act)
+  panel_el.scrollTop=prevScroll;
 }
 
 function confirmBackToMenu(){
@@ -1848,6 +1895,8 @@ function renderMPLobby() {
   box.style.cssText = "background:#0f2a0f;border:2px solid #4a8a4a;border-radius:18px;padding:24px 20px;width:100%;max-width:360px;color:#fff;text-align:center;";
 
   const numConnected = MP.connections.length;
+  const cpuCount = MP.cpuSlots.length;
+  const totalPlayers = 1 + numConnected + cpuCount; // host + echte spelers + CPU's
   const totalSlots = MP.isHost ? 4 : null;
 
   box.innerHTML = `
@@ -1870,18 +1919,43 @@ function renderMPLobby() {
           ${pid===0?'<span style="font-size:9px;color:#aaa">Host</span>':""}
         </div>`;
       }).join("")}
-      ${MP.isHost && numConnected<3 ? `<div style="font-size:11px;color:#555;padding:6px 10px;font-style:italic">Wachten op meer spelers... (${numConnected+1}/4)</div>`:""}
+      <div id="cpuSlotsRow"></div>
+      ${MP.isHost && totalPlayers<4 ? `<div style="font-size:11px;color:#555;padding:6px 10px;font-style:italic">Wachten op meer spelers, of voeg een CPU toe... (${totalPlayers}/4)</div>`:""}
     </div>
   `;
+
+  // CPU-rijen los toegevoegd (i.p.v. via de template string) zodat de host er
+  // een verwijderknop bij kan krijgen zonder de HTML-opbouw te compliceren.
+  const cpuRow = box.querySelector("#cpuSlotsRow");
+  MP.cpuSlots.forEach((cpu,i) => {
+    const pid = 1 + numConnected + i;
+    const row = document.createElement("div");
+    row.style.cssText = `display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(255,255,255,0.04);border-radius:8px;margin-bottom:5px;border:1px solid #2a4a2a`;
+    row.innerHTML = `<span style="font-size:16px">🤖</span><span style="font-size:13px;color:${PCOLORS[pid]||"#aaa"};font-weight:bold;flex:1">${esc(cpu.name)}</span><span style="font-size:9px;color:#888">CPU</span>`;
+    if (MP.isHost) {
+      const rm = document.createElement("button");
+      rm.textContent="✕";rm.style.cssText="background:none;border:none;color:#888;font-size:14px;cursor:pointer;padding:0 2px;";
+      rm.onclick=()=>{MP.cpuSlots.splice(i,1);mpBroadcastRoster();renderMPLobby();};
+      row.appendChild(rm);
+    }
+    cpuRow.appendChild(row);
+  });
 
   const btnRow = document.createElement("div");
   btnRow.style.cssText = "display:flex;gap:8px;";
 
   if (MP.isHost) {
+    if (totalPlayers<4) {
+      const addCpuBtn = mkBtn("🤖 CPU-speler toevoegen","width:100%;padding:9px 0;font-size:12px;background:rgba(255,255,255,0.06);color:#ccc;border:1px dashed #4a8a4a;border-radius:8px;margin-bottom:10px;",()=>{
+        MP.cpuSlots.push({name:`CPU ${MP.cpuSlots.length+1}`});
+        mpBroadcastRoster();renderMPLobby();
+      });
+      box.appendChild(addCpuBtn); // komt na de innerHTML-inhoud, vóór btnRow (die pas hierna wordt toegevoegd)
+    }
     const startBtn = mkBtn(
-      numConnected === 0 ? "⏳ Wacht op spelers" : `▶ Start nieuw spel (${numConnected+1} spelers)`,
-      "flex:1;padding:12px 0;font-size:14px;font-weight:bold;background:" + (numConnected>0?"#FFD700":"#333") + ";color:" + (numConnected>0?"#000":"#666") + ";border:none;border-radius:10px;",
-      mpStartGame, numConnected === 0
+      totalPlayers<2 ? "⏳ Wacht op spelers" : `▶ Start nieuw spel (${totalPlayers} spelers)`,
+      "flex:1;padding:12px 0;font-size:14px;font-weight:bold;background:" + (totalPlayers>=2?"#FFD700":"#333") + ";color:" + (totalPlayers>=2?"#000":"#666") + ";border:none;border-radius:10px;",
+      mpStartGame, totalPlayers<2
     );
     btnRow.appendChild(startBtn);
   }
@@ -2001,7 +2075,13 @@ function renderOverlaysMPTradeConfirm(data) {
 
 function renderManageModal(){
   G._activeOverlay="manage";
+  // Scrollpositie onthouden: dit paneel wordt na elke bouw/verkoop/hypotheek-actie
+  // herbouwd, en zonder dit sprong je telkens weer naar boven.
+  const prevPanel=DOM.overlayContainer.querySelector(".mgmt-scroll");
+  const prevScroll=prevPanel?prevPanel.scrollTop:0;
+  DOM.overlayContainer.innerHTML="";
   const p=panel("");
+  p.className="mgmt-scroll";
   p.innerHTML=`<div style="display:flex;justify-content:space-between;margin-bottom:12px"><h3 style="color:#FFD700;margin:0">🏗️ Beheer bezittingen</h3><button onclick="closeOverlay()" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer">✕</button></div>`;
   const sortedProps=sortedByGroup(G.players[G.cur]?.properties||[]);
   if(sortedProps.length===0){const d=document.createElement("div");d.style.cssText="color:#555;font-size:13px;text-align:center;padding:20px";d.textContent="Nog geen bezittingen.";p.appendChild(d);}
@@ -2044,6 +2124,7 @@ function renderManageModal(){
     tr.appendChild(row);p.appendChild(tr);
   }
   backdrop(p);
+  p.scrollTop=prevScroll;
 }
 
 function renderTradeModal(tid){
