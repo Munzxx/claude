@@ -317,7 +317,7 @@ function refreshCells(){
       // wordt gekozen zodat 'ie nooit over de kleurstrook van de straat heen valt.
       const fc=PCOLORS[oid],N=isBottom?9:8;
       const pos=isBottom?"bottom:0;right:0;":isLeft?"top:0;left:0;":"top:0;right:0;"; // isTop en de rest (rechterkolom) delen top-right
-      const border=isBottom?`border-bottom:${N}px solid ${fc};border-right:${N}px solid transparent;`
+      const border=isBottom?`border-bottom:${N}px solid ${fc};border-left:${N}px solid transparent;`
                  :isLeft?`border-top:${N}px solid ${fc};border-right:${N}px solid transparent;`
                  :`border-top:${N}px solid ${fc};border-left:${N}px solid transparent;`;
       const flag=document.createElement("div");
@@ -389,7 +389,10 @@ function refreshBottomBar(){
   } else if(G.phase==="buy"&&curP?.isHuman&&curSp&&isMyTurnMP){
     const buyFn  = MP.active && !MP.isHost ? ()=>mpAction("buy")  : handleBuy;
     const skipFn = MP.active && !MP.isHost ? ()=>mpAction("skip") : handleSkip;
-    row.appendChild(mkBtn(`✅ Kopen (€${curSp.price})`,"flex:1 1 auto;padding:13px 0;font-size:15px;font-weight:bold;background:#2e7d32;color:#fff;border:none;border-radius:10px;",buyFn));
+    const canAfford=curP.money>=curSp.price;
+    const buyBtn=mkBtn(`✅ Kopen (€${curSp.price})`,`flex:1 1 auto;padding:13px 0;font-size:15px;font-weight:bold;background:${canAfford?"#2e7d32":"#333"};color:${canAfford?"#fff":"#666"};border:none;border-radius:10px;`,buyFn,!canAfford);
+    if(!canAfford)buyBtn.title="Niet genoeg geld";
+    row.appendChild(buyBtn);
     row.appendChild(mkBtn("❌ Niet kopen","flex:1 1 auto;padding:13px 0;font-size:15px;background:#424242;color:#fff;border:none;border-radius:10px;",skipFn));
   } else if(G.phase==="endturn"&&curP?.isHuman&&isMyTurnMP){
     const endFn = MP.active && !MP.isHost ? ()=>mpAction("endturn") : handleEndTurn;
