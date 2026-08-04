@@ -11,10 +11,8 @@ function mpSend(data) {
   }
 }
 
-function mpSyncState() {
-  // Host sends full game state to all clients
-  if (!MP.isHost) return;
-  mpSend({
+function mpBuildSyncPayload() {
+  return {
     type: "sync",
     state: {
       players: G.players, owned: G.owned, houses: G.houses,
@@ -22,7 +20,21 @@ function mpSyncState() {
       log: G.log.slice(-20), pawnPos: {...G.pawnPos}, freePot: G.freePot,
       dice: G.dice, busy: G.busy,
     }
-  });
+  };
+}
+
+function mpSyncState() {
+  // Host sends full game state to all clients
+  if (!MP.isHost) return;
+  mpSend(mpBuildSyncPayload());
+}
+
+// Stuurt een volledige statussync naar ÉÉN specifieke verbinding — gebruikt wanneer
+// een speler opnieuw verbindt na een onderbreking, zodat alleen die speler bijgewerkt
+// wordt (in plaats van de hele sessie opnieuw te syncen).
+function mpSendStateTo(conn) {
+  if (!MP.isHost) return;
+  try { conn.send(mpBuildSyncPayload()); } catch(e){}
 }
 
 function mpApplySync(state) {
@@ -271,6 +283,19 @@ function mpCreateRoom(playerName) {
 
   MP.peer.on("connection", (conn) => {
     conn.on("open", () => {
+      // Terugkerende speler (na een onderbroken verbinding) — metadata.rejoin wordt
+      // gezet door mpReconnectTry(). Vervang de kapotte oude verbinding op DEZELFDE
+      // pid-plek, in plaats van als nieuwe speler achteraan toe te voegen.
+      if (conn.metadata && conn.metadata.rejoin) {
+        const pid = conn.metadata.pid;
+        if (pid != null && pid >= 1 && pid <= MP.connections.length && MP.connections[pid-1] == null) {
+          MP.connections[pid-1] = conn;
+          mpSendStateTo(conn);
+          const name = G.players[pid]?.name || MP.roster[pid]?.name || `Speler ${pid+1}`;
+          showToast(`${name} is teruggekeerd.`, "#4caf50");
+          return; // niet doorvallen naar de nieuwe-speler-flow hieronder
+        }
+      }
       MP.connections.push(conn);
       const pid = MP.connections.length; // 1-based voor clients
       conn.metadata = { pid };
@@ -284,8 +309,15 @@ function mpCreateRoom(playerName) {
     conn.on("data", (data) => mpHandleMessage(data, conn));
     conn.on("close", () => {
       const idx = MP.connections.indexOf(conn);
-      MP.connections = MP.connections.filter(c => c !== conn);
-      if (idx >= 0) MP.roster.splice(idx+1, 1); // verwijder uit roster
+      if (MP.active) {
+        // Tijdens een actief spel de plek NIET verschuiven — anders raken de pid's
+        // van de ANDERE spelers uit sync met hun index. Laat de plek leeg (null)
+        // zodat een latere reconnect 'm exact kan hervullen op dezelfde pid.
+        if (idx >= 0) MP.connections[idx] = null;
+      } else {
+        MP.connections = MP.connections.filter(c => c !== conn);
+        if (idx >= 0) MP.roster.splice(idx+1, 1); // verwijder uit roster
+      }
       mpBroadcastRoster();
       renderMPLobby();
     });
@@ -324,6 +356,13 @@ function mpJoinRoom(code, playerName) {
     conn.on("data", (data) => mpHandleMessage(data, conn));
     conn.on("close", () => {
       MP.status = "Verbinding verbroken";
+      MP.hostConn = null;
+      if (MP.active && document.visibilityState !== "visible") {
+        // Op de achtergrond weggevallen (bv. andere app geopend) — geen paniek,
+        // mpHandleVisibilityChange() pakt het herstel op zodra je terugkeert.
+        return;
+      }
+      // Zichtbaar en toch losgekoppeld (of nog in de lobby) — direct, echt probleem
       showToast("Verbinding met host verbroken.", "#f44");
       mpReset(); showMenu();
     });
@@ -334,6 +373,85 @@ function mpJoinRoom(code, playerName) {
     showToast("Kan niet verbinden: " + err.type, "#f44");
     renderMPLobby();
   });
+}
+
+// ─── CLIENT: herstel na een onderbroken verbinding ────────────────────────────
+// Trigger: het tabblad/app wordt weer zichtbaar (bv. terug uit een andere app op
+// de telefoon) na een periode op de achtergrond, waarin het OS de WebRTC/websocket-
+// verbinding kan hebben afgebroken. Alleen relevant voor spelers (niet de host —
+// als de host wegvalt is dat een fundamenteel ander scenario, hier niet opgevangen).
+function mpHandleVisibilityChange() {
+  if (document.visibilityState !== "visible") return;
+  if (!MP.active || MP.isHost) return; // alleen clients, en alleen tijdens een spel
+  if (MP.reconnecting) return; // al bezig
+  const connAlive = MP.hostConn && MP.hostConn.open && MP.peer && !MP.peer.destroyed && !MP.peer.disconnected;
+  if (connAlive) return; // niets aan de hand
+  mpAttemptReconnect();
+}
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", mpHandleVisibilityChange);
+}
+
+function mpAttemptReconnect() {
+  if (MP.reconnecting) return;
+  MP.reconnecting = true;
+  MP.reconnectDeadline = Date.now() + 45000; // ~45s totale hersteltijd, daarna opgeven
+  mpReconnectBannerShow("🔄 Verbinding herstellen…");
+  mpReconnectTry();
+}
+
+function mpReconnectTry() {
+  if (!MP.reconnecting) return; // ondertussen elders al afgehandeld/gestopt
+  if (Date.now() > MP.reconnectDeadline) { mpReconnectGiveUp(); return; }
+
+  try { if (MP.peer) MP.peer.destroy(); } catch(e){}
+  const code = MP.roomCode, myPid = MP.myPid;
+  const newPeer = new Peer(undefined, {
+    host: "0.peerjs.com", port: 443, path: "/", secure: true, debug: 0,
+  });
+  MP.peer = newPeer;
+
+  let settled = false;
+  const giveUpThisTry = () => {
+    if (settled) return;
+    settled = true;
+    try { newPeer.destroy(); } catch(e){}
+    setTimeout(mpReconnectTry, 2000); // even wachten, dan een nieuwe poging
+  };
+  const tryTimeout = setTimeout(giveUpThisTry, 6000); // max 6s per poging
+
+  newPeer.on("open", () => {
+    if (settled) return;
+    const conn = newPeer.connect("propertix-" + code, {
+      metadata: { rejoin: true, pid: myPid },
+      reliable: true,
+    });
+    conn.on("open", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(tryTimeout);
+      MP.hostConn = conn;
+      conn.on("data", (data) => mpHandleMessage(data, conn));
+      conn.on("close", () => {
+        MP.status = "Verbinding verbroken"; MP.hostConn = null;
+        if (MP.active && document.visibilityState !== "visible") return;
+        showToast("Verbinding met host verbroken.", "#f44");
+        mpReset(); showMenu();
+      });
+      MP.reconnecting = false;
+      mpReconnectBannerHide();
+      showToast("✅ Verbinding hersteld!", "#4caf50");
+    });
+    conn.on("error", () => {}); // de tryTimeout hierboven vangt dit sowieso af
+  });
+  newPeer.on("error", giveUpThisTry);
+}
+
+function mpReconnectGiveUp() {
+  MP.reconnecting = false;
+  mpReconnectBannerHide();
+  showToast("❌ Kon de verbinding niet herstellen.", "#f44");
+  mpReset(); showMenu();
 }
 
 // ── HOST: Start the multiplayer game ─────────────────────────────────────────

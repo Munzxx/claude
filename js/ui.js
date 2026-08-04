@@ -14,6 +14,23 @@ function showToast(msg,color="#FFD700"){
   toastTimer=setTimeout(()=>{if(t.parentNode)t.remove();},2600);
 }
 
+// ─── RECONNECT-STATUSBALK ──────────────────────────────────────────────────────
+// Niet-blokkerend (geen overlay/backdrop, de speler kan gewoon verder kijken),
+// blijft zichtbaar tot mpReconnectBannerHide() — in tegenstelling tot de toast,
+// die vanzelf verdwijnt. Lazy gebouwd bij het eerste gebruik, want dit komt zelden voor.
+function mpReconnectBannerShow(msg){
+  if(!DOM.reconnectBanner){
+    DOM.reconnectBanner=document.createElement("div");
+    DOM.reconnectBanner.style.cssText="position:fixed;top:0;left:0;right:0;z-index:250;background:#7a1f1f;color:#fff;text-align:center;padding:8px 12px;font-size:13px;font-family:Georgia,serif;box-shadow:0 2px 8px rgba(0,0,0,0.4);";
+    document.body.appendChild(DOM.reconnectBanner);
+  }
+  DOM.reconnectBanner.textContent=msg||"🔄 Verbinding herstellen…";
+  DOM.reconnectBanner.style.display="block";
+}
+function mpReconnectBannerHide(){
+  if(DOM.reconnectBanner) DOM.reconnectBanner.style.display="none";
+}
+
 // ─── ANIMATION ENGINE ─────────────────────────────────────────────────────────
 // Dice: only touches the two die DOM elements
 function animateDice(d1,d2,onDone){

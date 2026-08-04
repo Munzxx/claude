@@ -31,6 +31,8 @@ const MP = {
   animatingPid: null,  // client: pid waarvan de dobbel/loop-animatie nu lokaal wordt nagespeeld
   pendingSync: null,   // client: binnengekomen sync die wacht tot de animatie klaar is
   cpuSlots: [],         // host: door de host toegevoegde CPU-spelers, komen ná de echte connecties
+  reconnecting: false,  // client: is er nu een hersteltoging aan de gang?
+  reconnectDeadline: 0, // client: timestamp waarop de hersteltogingen worden opgegeven
 };
 
 // ─── CHAT STATE ───────────────────────────────────────────────────────────────
@@ -73,4 +75,8 @@ let DOM={
   chatTabsRow:null,
   chatMessages:null,
   chatInput:null,
+  // niet-blokkerende statusbalk bovenaan tijdens een hersteltoging — lazy gebouwd
+  // bij het eerste gebruik (in tegenstelling tot chat, die altijd nodig kan zijn
+  // tijdens een online spel, komt dit zelden voor)
+  reconnectBanner:null,
 };
