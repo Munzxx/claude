@@ -344,10 +344,13 @@ function showCardFlip(opts){
   const card=document.createElement("div");
   card.style.cssText="width:170px;height:230px;position:relative;transform-style:preserve-3d;animation:deedFlip 1s cubic-bezier(.4,0,.2,1) forwards;";
   const back=document.createElement("div");
-  back.style.cssText="position:absolute;inset:0;border-radius:10px;background:linear-gradient(135deg,#1a3a1a,#0d1f0d);border:2px solid #FFD700;backface-visibility:hidden;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 30px rgba(0,0,0,0.6);";
+  // Expliciete rotateY(0deg) + z-index: Firefox berekent backface-visibility soms
+  // verkeerd bij rotateY+perspective (Mozilla bug 1306107) — zonder deze twee kan
+  // de achterkant zichtbaar blijven staan i.p.v. om te draaien naar de voorkant.
+  back.style.cssText="position:absolute;inset:0;border-radius:10px;background:linear-gradient(135deg,#1a3a1a,#0d1f0d);border:2px solid #FFD700;backface-visibility:hidden;transform:rotateY(0deg);z-index:1;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 30px rgba(0,0,0,0.6);";
   back.innerHTML=`<div style="font-size:28px">${opts.backIcon||"🏛️"}</div>`;
   const front=document.createElement("div");
-  front.style.cssText="position:absolute;inset:0;border-radius:10px;background:#fdf6e3;border:2px solid #333;backface-visibility:hidden;transform:rotateY(180deg);overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.6);display:flex;flex-direction:column;";
+  front.style.cssText="position:absolute;inset:0;border-radius:10px;background:#fdf6e3;border:2px solid #333;backface-visibility:hidden;transform:rotateY(180deg);z-index:2;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.6);display:flex;flex-direction:column;";
   front.innerHTML=`<div style="background:${opts.colorBg||"#555"};padding:8px 6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:12px;text-align:center;text-shadow:0 1px 2px rgba(0,0,0,0.4)">${opts.icon?opts.icon+" ":""}${esc(opts.title)}</div>
     <div style="flex:1;padding:12px;color:#333;font-size:11px;text-align:center;display:flex;flex-direction:column;justify-content:center;gap:7px;line-height:1.45">${(opts.lines||[]).map(l=>`<div>${l}</div>`).join("")}</div>`;
   card.appendChild(back);card.appendChild(front);

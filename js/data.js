@@ -97,7 +97,7 @@ const CHEST=[
   {t:"Ga naar START. Ontvang €200!",a:()=>({money:200,moveTo:0})},
   {t:"Ga naar de gevangenis!",a:()=>({goToJail:true})},
 ];
-const APP_VERSION="v16.4";
+const APP_VERSION="v16.5";
 // Los van APP_VERSION: dit volgt alleen de VORM van save-data, niet de feature-versie.
 // Ophogen alleen wanneer een save-veld van betekenis/type verandert (iets dat een
 // eenvoudige ??-fallback niet kan opvangen) — niet bij elke nieuwe feature. Zie
