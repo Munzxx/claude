@@ -338,24 +338,28 @@ function handleBailOut(){
 // ook voor kans/kist-kaarten en belasting, zodat die "op dezelfde manier" getoond
 // worden. lines[] mag kleine inline HTML bevatten (alleen gevuld met eigen, vaste
 // spelteksten — nooit met speler-input, dus geen esc() nodig op dat niveau).
+// Implementatie: ÉÉN element dat via scaleX "op zijn kant" draait en halverwege van
+// inhoud wisselt — geen rotateY/backface-visibility/perspective meer. Die 3D-aanpak
+// gaf op Firefox onbetrouwbare resultaten (bug 1306107: verkeerde kant zichtbaar,
+// of het element verdwijnt helemaal). Deze 2D-versie werkt identiek in elke browser.
 function showCardFlip(opts){
   const wrap=document.createElement("div");
-  wrap.style.cssText="position:fixed;inset:0;z-index:220;display:flex;align-items:center;justify-content:center;pointer-events:none;perspective:800px;";
+  wrap.style.cssText="position:fixed;inset:0;z-index:220;display:flex;align-items:center;justify-content:center;pointer-events:none;";
   const card=document.createElement("div");
-  card.style.cssText="width:170px;height:230px;position:relative;transform-style:preserve-3d;animation:deedFlip 1s cubic-bezier(.4,0,.2,1) forwards;";
-  const back=document.createElement("div");
-  // Expliciete rotateY(0deg) + z-index: Firefox berekent backface-visibility soms
-  // verkeerd bij rotateY+perspective (Mozilla bug 1306107) — zonder deze twee kan
-  // de achterkant zichtbaar blijven staan i.p.v. om te draaien naar de voorkant.
-  back.style.cssText="position:absolute;inset:0;border-radius:10px;background:linear-gradient(135deg,#1a3a1a,#0d1f0d);border:2px solid #FFD700;backface-visibility:hidden;transform:rotateY(0deg);z-index:1;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 30px rgba(0,0,0,0.6);";
-  back.innerHTML=`<div style="font-size:28px">${opts.backIcon||"🏛️"}</div>`;
-  const front=document.createElement("div");
-  front.style.cssText="position:absolute;inset:0;border-radius:10px;background:#fdf6e3;border:2px solid #333;backface-visibility:hidden;transform:rotateY(180deg);z-index:2;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.6);display:flex;flex-direction:column;";
-  front.innerHTML=`<div style="background:${opts.colorBg||"#555"};padding:8px 6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:12px;text-align:center;text-shadow:0 1px 2px rgba(0,0,0,0.4)">${opts.icon?opts.icon+" ":""}${esc(opts.title)}</div>
-    <div style="flex:1;padding:12px;color:#333;font-size:11px;text-align:center;display:flex;flex-direction:column;justify-content:center;gap:7px;line-height:1.45">${(opts.lines||[]).map(l=>`<div>${l}</div>`).join("")}</div>`;
-  card.appendChild(back);card.appendChild(front);
+  card.style.cssText="width:170px;height:230px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6);animation:deedFlip 1s cubic-bezier(.4,0,.2,1) forwards;overflow:hidden;background:linear-gradient(135deg,#1a3a1a,#0d1f0d);border:2px solid #FFD700;display:flex;align-items:center;justify-content:center;";
+  card.innerHTML=`<div style="font-size:28px">${opts.backIcon||"🏛️"}</div>`;
   wrap.appendChild(card);
   DOM.overlayContainer.appendChild(wrap);
+  // Halverwege de animatie staat de kaart "op zijn kant" (scaleX ~0) — dat is het
+  // moment om de inhoud te wisselen naar de voorkant. We raken hier bewust NIET de
+  // `animation`-property aan (geen cssText-reset), anders herstart de animatie.
+  setTimeout(()=>{
+    card.style.background="#fdf6e3";
+    card.style.border="2px solid #333";
+    card.style.flexDirection="column";
+    card.innerHTML=`<div style="background:${opts.colorBg||"#555"};padding:8px 6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:12px;text-align:center;text-shadow:0 1px 2px rgba(0,0,0,0.4)">${opts.icon?opts.icon+" ":""}${esc(opts.title)}</div>
+      <div style="flex:1;padding:12px;color:#333;font-size:11px;text-align:center;display:flex;flex-direction:column;justify-content:center;gap:7px;line-height:1.45">${(opts.lines||[]).map(l=>`<div>${l}</div>`).join("")}</div>`;
+  },500);
   // Lang genoeg laten staan om echt te kunnen lezen (was eerst 1.5s — te kort).
   setTimeout(()=>wrap.remove(),opts.duration||4000);
 }

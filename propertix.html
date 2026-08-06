@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Propertix v16.5">
+<meta name="apple-mobile-web-app-title" content="Propertix v16.6">
 <meta name="theme-color" content="#0d1f0d">
 <meta name="description" content="Propertix — het klassieke vastgoedspel">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-512.png">
-<title>Propertix v16.5</title>
+<title>Propertix v16.6</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
@@ -75,12 +75,15 @@ input{font-family:Georgia,serif}
   100%{transform:translateY(110vh) rotate(540deg);opacity:0}
 }
 
-/* Deed card flip bij het kopen van een straat */
+/* Deed card flip bij het kopen van een straat — scaleX i.p.v. rotateY/3D, zie
+   toelichting bij showCardFlip() in game-logic.js voor de reden (Firefox-bug). */
 @keyframes deedFlip{
-  0%{transform:rotateY(0deg) scale(0.75);opacity:0}
-  10%{opacity:1}
-  60%{transform:rotateY(180deg) scale(1.06)}
-  100%{transform:rotateY(180deg) scale(1)}
+  0%{transform:scaleX(1) scale(0.8);opacity:0}
+  15%{opacity:1;transform:scaleX(1) scale(0.9)}
+  48%{transform:scaleX(0.05) scale(0.95)}
+  52%{transform:scaleX(0.05) scale(0.95)}
+  85%{transform:scaleX(1) scale(1.04)}
+  100%{transform:scaleX(1) scale(1)}
 }
 
 /* Chat — alleen zichtbaar tijdens online multiplayer */
